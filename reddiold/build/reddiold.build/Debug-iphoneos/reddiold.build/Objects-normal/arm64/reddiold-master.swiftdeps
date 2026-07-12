@@ -1,0 +1,20 @@
+version: "Apple Swift version 5.5.2 (swiftlang-1300.0.47.5 clang-1300.0.29.30)"
+options: "501a570cff7ae88b06fd61f4c2f04e43c36cf0471e051f6ee184b1de48d7e42f"
+build_start_time: [1784052798, 575410842]
+build_end_time: [1784052811, 660529136]
+inputs:
+  "/Users/srv-admin/Documents/ios6-app/reddiold/reddiold/reddiold/AppDelegate.swift": [1783826249, 280479431]
+  "/Users/srv-admin/Documents/ios6-app/reddiold/reddiold/reddiold/AtomFeedParser.swift": [1783974369, 117434740]
+  "/Users/srv-admin/Documents/ios6-app/reddiold/reddiold/reddiold/Comment.swift": [1783826258, 506875991]
+  "/Users/srv-admin/Documents/ios6-app/reddiold/reddiold/reddiold/CurlFetcher.swift": [1783826238, 665028095]
+  "/Users/srv-admin/Documents/ios6-app/reddiold/reddiold/reddiold/FavoritesStore.swift": [1783975358, 126852512]
+  "/Users/srv-admin/Documents/ios6-app/reddiold/reddiold/reddiold/FavoritesVC.swift": [1783975944, 139766454]
+  "/Users/srv-admin/Documents/ios6-app/reddiold/reddiold/reddiold/HTMLUtil.swift": [1783826238, 683588027]
+  "/Users/srv-admin/Documents/ios6-app/reddiold/reddiold/reddiold/HomeVC.swift": [1783975334, 44196605]
+  "/Users/srv-admin/Documents/ios6-app/reddiold/reddiold/reddiold/Post.swift": [1783976307, 250039577]
+  "/Users/srv-admin/Documents/ios6-app/reddiold/reddiold/reddiold/PostListVC.swift": [1783976317, 431399345]
+  "/Users/srv-admin/Documents/ios6-app/reddiold/reddiold/reddiold/PostVC.swift": [1784052780, 172505855]
+  "/Users/srv-admin/Documents/ios6-app/reddiold/reddiold/reddiold/RedditAPI.swift": [1783975258, 589111328]
+  "/Users/srv-admin/Documents/ios6-app/reddiold/reddiold/reddiold/RelativeTime.swift": [1783976307, 863040924]
+  "/Users/srv-admin/Documents/ios6-app/reddiold/reddiold/reddiold/SearchVC.swift": [1783975959, 88982582]
+  "/Users/srv-admin/Documents/ios6-app/reddiold/reddiold/reddiold/SubredditVC.swift": [1783975334, 656126499]

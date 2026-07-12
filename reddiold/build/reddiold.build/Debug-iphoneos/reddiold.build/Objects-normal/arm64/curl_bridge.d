@@ -1,0 +1,26 @@
+dependencies: \
+  /Users/srv-admin/Documents/ios6-app/reddiold/reddiold/reddiold/curl_bridge.c \
+  /Users/srv-admin/Documents/ios6-app/reddiold/reddiold/reddiold/curl_bridge.h \
+  /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS15.2.sdk/usr/include/kcdata.modulemap \
+  /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS15.2.sdk/usr/include/uuid.modulemap \
+  /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS15.2.sdk/usr/include/netinet6.modulemap \
+  /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS15.2.sdk/usr/include/machine.modulemap \
+  /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS15.2.sdk/usr/include/device.modulemap \
+  /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS15.2.sdk/usr/include/mach_debug.modulemap \
+  /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS15.2.sdk/usr/include/mach_machine.modulemap \
+  /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS15.2.sdk/usr/include/mach.modulemap \
+  /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS15.2.sdk/usr/include/bank.modulemap \
+  /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS15.2.sdk/usr/include/darwin_posix_sys_types.modulemap \
+  /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS15.2.sdk/usr/include/netinet.modulemap \
+  /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS15.2.sdk/usr/include/net.modulemap \
+  /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS15.2.sdk/usr/include/darwin_cdefs.modulemap \
+  /Users/srv-admin/Documents/ios6-app/reddiold/reddiold/ThirdParty/curl/include/curl/curl.h \
+  /Users/srv-admin/Documents/ios6-app/reddiold/reddiold/ThirdParty/curl/include/curl/curlver.h \
+  /Users/srv-admin/Documents/ios6-app/reddiold/reddiold/ThirdParty/curl/include/curl/system.h \
+  /Users/srv-admin/Documents/ios6-app/reddiold/reddiold/ThirdParty/curl/include/curl/easy.h \
+  /Users/srv-admin/Documents/ios6-app/reddiold/reddiold/ThirdParty/curl/include/curl/multi.h \
+  /Users/srv-admin/Documents/ios6-app/reddiold/reddiold/ThirdParty/curl/include/curl/urlapi.h \
+  /Users/srv-admin/Documents/ios6-app/reddiold/reddiold/ThirdParty/curl/include/curl/options.h \
+  /Users/srv-admin/Documents/ios6-app/reddiold/reddiold/ThirdParty/curl/include/curl/header.h \
+  /Users/srv-admin/Documents/ios6-app/reddiold/reddiold/ThirdParty/curl/include/curl/websockets.h \
+  /Users/srv-admin/Documents/ios6-app/reddiold/reddiold/ThirdParty/curl/include/curl/mprintf.h

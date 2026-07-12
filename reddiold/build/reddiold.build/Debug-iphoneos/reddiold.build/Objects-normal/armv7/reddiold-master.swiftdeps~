@@ -1,0 +1,14 @@
+version: "Swift version 5.6.3-dev (LLVM 72dbaa0dbac49e4, Swift 43f64c8712d4f83)"
+options: "522cba4d375d51a4f5c57f2149443914c06d4b6e3f78de292c5b20f145696634"
+build_start_time: [1783826377, 538196086]
+build_end_time: [1783826422, 641751050]
+inputs:
+  "/Users/srv-admin/Documents/ios6-app/reddiold/reddiold/reddiold/AppDelegate.swift": [1783826249, 280479431]
+  "/Users/srv-admin/Documents/ios6-app/reddiold/reddiold/reddiold/AtomFeedParser.swift": [1783826268, 763989925]
+  "/Users/srv-admin/Documents/ios6-app/reddiold/reddiold/reddiold/Comment.swift": [1783826258, 506875991]
+  "/Users/srv-admin/Documents/ios6-app/reddiold/reddiold/reddiold/CurlFetcher.swift": [1783826238, 665028095]
+  "/Users/srv-admin/Documents/ios6-app/reddiold/reddiold/reddiold/HTMLUtil.swift": [1783826238, 683588027]
+  "/Users/srv-admin/Documents/ios6-app/reddiold/reddiold/reddiold/HomeVC.swift": [1783826290, 987596511]
+  "/Users/srv-admin/Documents/ios6-app/reddiold/reddiold/reddiold/Post.swift": [1783826257, 582395792]
+  "/Users/srv-admin/Documents/ios6-app/reddiold/reddiold/reddiold/PostVC.swift": [1783826304, 880820274]
+  "/Users/srv-admin/Documents/ios6-app/reddiold/reddiold/reddiold/RedditAPI.swift": [1783826280, 267679691]
