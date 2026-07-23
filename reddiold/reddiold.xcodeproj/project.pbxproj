@@ -37,6 +37,9 @@
 		2553F54E6B9ED487EFDCAFE6 /* EditFavoritesVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28F9DB4AC66A10D9FE090AAA /* EditFavoritesVC.swift */; };
 		9F4EA1290BEC4A9658CA4B53 /* SavedPostsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AADFB18083C021013C64ADD0 /* SavedPostsStore.swift */; };
 		7EC4748F74E999C0B550E4D0 /* SavedPostsVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 304E91439EBA17D4810CE881 /* SavedPostsVC.swift */; };
+		3D5265127B0364D29DE8E798 /* M3U8Parser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 395345091E78B0FF060C8C84 /* M3U8Parser.swift */; };
+		119BDDBFAA9F2B42DA0C5DEE /* RedditVideoMux.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6718C6E06A215F6C5ABD9021 /* RedditVideoMux.swift */; };
+		0D4F94D551F0A2EFE4E00026 /* RedditVideoProxy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0EC3108C42581D8BFA3A01B0 /* RedditVideoProxy.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -89,6 +92,9 @@
 		28F9DB4AC66A10D9FE090AAA /* EditFavoritesVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditFavoritesVC.swift; sourceTree = "<group>"; };
 		AADFB18083C021013C64ADD0 /* SavedPostsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedPostsStore.swift; sourceTree = "<group>"; };
 		304E91439EBA17D4810CE881 /* SavedPostsVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedPostsVC.swift; sourceTree = "<group>"; };
+		395345091E78B0FF060C8C84 /* M3U8Parser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = M3U8Parser.swift; sourceTree = "<group>"; };
+		6718C6E06A215F6C5ABD9021 /* RedditVideoMux.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RedditVideoMux.swift; sourceTree = "<group>"; };
+		0EC3108C42581D8BFA3A01B0 /* RedditVideoProxy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RedditVideoProxy.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -160,6 +166,9 @@
 				92874CB0A4986D19C65C2CFC /* FavoritesVC.swift */,
 				8B3078FC79158C1226BE8ED1 /* SearchVC.swift */,
 				53D4B79177789241F1E49822 /* PostVC.swift */,
+				395345091E78B0FF060C8C84 /* M3U8Parser.swift */,
+				6718C6E06A215F6C5ABD9021 /* RedditVideoMux.swift */,
+				0EC3108C42581D8BFA3A01B0 /* RedditVideoProxy.swift */,
 				CDDA5BDC79C685FA560A7E80 /* curl_bridge.c */,
 				8F2C5577B2D82FCA1000162E /* atomic_stubs.c */,
 				CFD7248193AD0E28080D9F5E /* atomic_stubs.S */,
@@ -337,6 +346,9 @@
 				BB9A1672E68F67E91870B4C3 /* FavoritesVC.swift in Sources */,
 				D507B27B6AF7CF34F591ACD9 /* SearchVC.swift in Sources */,
 				66B62C288540676B3E3CF8FB /* PostVC.swift in Sources */,
+				3D5265127B0364D29DE8E798 /* M3U8Parser.swift in Sources */,
+				119BDDBFAA9F2B42DA0C5DEE /* RedditVideoMux.swift in Sources */,
+				0D4F94D551F0A2EFE4E00026 /* RedditVideoProxy.swift in Sources */,
 				E29DACF455DB807E5F7CE24F /* curl_bridge.c in Sources */,
 				CEB7CF35301A36D24253218E /* atomic_stubs.c in Sources */,
 				BCBE2D4F9F083B856FCA7731 /* atomic_stubs.S in Sources */,

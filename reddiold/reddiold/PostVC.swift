@@ -14,6 +14,10 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
     private var mediaBadgeLabel: UILabel?
     private var commentsButton: UIButton?
     private var isLoadingGallery = false
+    private var isLoadingVideo = false
+    // The local RedditVideoProxy session URL backing the currently-presented player, if any —
+    // used to tear down that session's state once playback finishes/is dismissed.
+    private var activeVideoProxyURL: URL?
     // Retained so it isn't deallocated mid-playback, and so the finish-notification
     // observer below can be torn down against the right object.
     private var activeMoviePlayerVC: MPMoviePlayerViewController?
@@ -256,16 +260,119 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         }
     }
 
-    // No network call happens until this is tapped — the HLS URL is just built from the
-    // "v.redd.it/{id}" link already parsed out of the RSS content, and the movie player
-    // fetches the manifest/segments itself lazily once presented. Explicitly setting
-    // movieSourceType to .streaming avoids MPMoviePlayerController misidentifying the
-    // m3u8 as a progressive download; shouldAutoplay (default true) starts playback once
-    // the manifest loads, so no manual play() call is needed (calling it immediately in
-    // the present() completion is too early and isn't necessary).
+    // v.redd.it serves fMP4/CMAF HLS (byte-range #EXT-X-MAP segments) which
+    // MPMoviePlayerController (an iOS6-era classic-.ts-segment-only HLS client) can't
+    // parse — it opens the player then immediately posts a "finish" notification with a
+    // playback-error reason, which looks like "it opens then instantly closes". Instead of
+    // handing the remote m3u8 straight to the player, fetch+parse it ourselves and spin up
+    // a local RedditVideoProxy session that transmuxes the fMP4 video+audio segments to
+    // classic .ts on the fly, then point the player at that local http://127.0.0.1 URL.
     private func playVideo(videoId: String) {
-        guard let url = URL(string: "https://v.redd.it/\(videoId)/HLSPlaylist.m3u8"),
-              let playerVC = MPMoviePlayerViewController(contentURL: url) else { return }
+        guard !isLoadingVideo else { return }
+        isLoadingVideo = true
+        mediaBadgeLabel?.text = "Loading video..."
+        guard let masterURL = URL(string: "https://v.redd.it/\(videoId)/HLSPlaylist.m3u8") else {
+            videoLoadFailed()
+            return
+        }
+        CurlFetcher.fetch(url: masterURL, userAgent: RedditAPI.userAgent) { [weak self] data, error in
+            guard let self = self else { return }
+            guard error == nil, let data = data, let text = String(data: data, encoding: .utf8) else {
+                self.videoLoadFailed()
+                return
+            }
+            let variants = M3U8Parser.masterVariants(text, baseURL: masterURL)
+            let audioGroups = M3U8Parser.audioGroupURLs(text, baseURL: masterURL)
+            // Smallest bandwidth first — this is a small-screen iOS6/7/8 player, no need
+            // for the highest-res variant, and it keeps segment fetch/transmux cheap.
+            let sorted = variants.sorted { $0.bandwidth < $1.bandwidth }
+            guard let variant = sorted.first(where: { $0.audioGroupID != nil && audioGroups[$0.audioGroupID!] != nil }),
+                  let audioGroupID = variant.audioGroupID,
+                  let audioPlaylistURL = audioGroups[audioGroupID] else {
+                self.videoLoadFailed()
+                return
+            }
+            self.fetchVariantPlaylists(videoPlaylistURL: variant.playlistURL, audioPlaylistURL: audioPlaylistURL)
+        }
+    }
+
+    // No DispatchGroup (iOS6-safe, but this project's convention elsewhere is plain
+    // completion-tracking booleans) — fetch both variant playlists, then proceed once
+    // both have arrived (or fail immediately if either request errors).
+    private func fetchVariantPlaylists(videoPlaylistURL: URL, audioPlaylistURL: URL) {
+        var videoText: String?
+        var audioText: String?
+        var failed = false
+        let lock = NSLock()
+
+        func proceedIfReady() {
+            lock.lock()
+            let vText = videoText
+            let aText = audioText
+            let didFail = failed
+            lock.unlock()
+            guard !didFail else { return }
+            guard let vText = vText, let aText = aText else { return }
+            guard let videoPlaylist = M3U8Parser.variantPlaylist(vText, baseURL: videoPlaylistURL),
+                  let audioPlaylist = M3U8Parser.variantPlaylist(aText, baseURL: audioPlaylistURL) else {
+                self.videoLoadFailed()
+                return
+            }
+            self.startProxiedPlayback(videoPlaylist: videoPlaylist, audioPlaylist: audioPlaylist)
+        }
+
+        CurlFetcher.fetch(url: videoPlaylistURL, userAgent: RedditAPI.userAgent) { [weak self] data, error in
+            guard let self = self else { return }
+            guard error == nil, let data = data, let text = String(data: data, encoding: .utf8) else {
+                lock.lock(); failed = true; lock.unlock()
+                self.videoLoadFailed()
+                return
+            }
+            lock.lock(); videoText = text; lock.unlock()
+            proceedIfReady()
+        }
+        CurlFetcher.fetch(url: audioPlaylistURL, userAgent: RedditAPI.userAgent) { [weak self] data, error in
+            guard let self = self else { return }
+            guard error == nil, let data = data, let text = String(data: data, encoding: .utf8) else {
+                lock.lock(); failed = true; lock.unlock()
+                self.videoLoadFailed()
+                return
+            }
+            lock.lock(); audioText = text; lock.unlock()
+            proceedIfReady()
+        }
+    }
+
+    // Video/audio variant playlists are confirmed (via curl) to always have the SAME
+    // segment count for a given Reddit video — pair them by plain array index, take the
+    // min count defensively in case that ever isn't true.
+    private func startProxiedPlayback(videoPlaylist: M3U8Parser.VariantPlaylist, audioPlaylist: M3U8Parser.VariantPlaylist) {
+        let count = min(videoPlaylist.segments.count, audioPlaylist.segments.count)
+        guard count > 0 else {
+            videoLoadFailed()
+            return
+        }
+        var segs: [RedditVideoProxy.Seg] = []
+        segs.reserveCapacity(count)
+        for i in 0..<count {
+            segs.append(RedditVideoProxy.Seg(videoRange: videoPlaylist.segments[i].range,
+                                              audioRange: audioPlaylist.segments[i].range,
+                                              duration: videoPlaylist.segments[i].duration))
+        }
+        guard let localURL = RedditVideoProxy.shared.registerSession(
+            videoURL: videoPlaylist.mediaURL, audioURL: audioPlaylist.mediaURL,
+            videoInitRange: videoPlaylist.initRange, audioInitRange: audioPlaylist.initRange,
+            segments: segs) else {
+            videoLoadFailed()
+            return
+        }
+        guard let playerVC = MPMoviePlayerViewController(contentURL: localURL) else {
+            videoLoadFailed()
+            return
+        }
+        isLoadingVideo = false
+        mediaBadgeLabel?.text = "Play Video"
+        activeVideoProxyURL = localURL
         activeMoviePlayerVC = playerVC
         playerVC.moviePlayer.movieSourceType = .streaming
         playerVC.moviePlayer.scalingMode = .aspectFit
@@ -274,6 +381,11 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
             name: NSNotification.Name("MPMoviePlayerPlaybackDidFinishNotification"),
             object: playerVC.moviePlayer)
         present(playerVC, animated: true, completion: nil)
+    }
+
+    private func videoLoadFailed() {
+        isLoadingVideo = false
+        mediaBadgeLabel?.text = "Video - couldn't load, tap to retry"
     }
 
     // MPMoviePlayerViewController dismisses itself automatically the moment its
@@ -287,6 +399,8 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
             self, name: NSNotification.Name("MPMoviePlayerPlaybackDidFinishNotification"),
             object: notification.object)
         activeMoviePlayerVC = nil
+        RedditVideoProxy.shared.closeSession(url: activeVideoProxyURL)
+        activeVideoProxyURL = nil
         let reason = (notification.userInfo?["MPMoviePlayerPlaybackDidFinishReasonUserInfoKey"] as? NSNumber)?.intValue ?? -1
         guard reason == 1 else { return }
         let alert = UIAlertView(title: "Couldn't play video",
