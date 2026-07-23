@@ -25,6 +25,24 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
 
     private static let bodyFont = UIFont.systemFont(ofSize: 14)
     private static let authorFont = UIFont.systemFont(ofSize: 12)
+    private static let moreStubFont = UIFont.italicSystemFont(ofSize: 13)
+
+    // Reply-thread visuals: cap indentation so a very deep sub-thread doesn't eat the whole
+    // row width, and cycle a small fixed color palette per depth level for the colored
+    // left "thread line" bars (mimicking Reddit's own app/mobile-web nested-comment look).
+    // Custom UIColor(red:green:blue:) literals, not .systemBlue/.systemGreen — those are
+    // iOS 13+ only and unsafe on this project's iOS 6/7/8 targets.
+    private static let maxIndentDepth = 8
+    private static let indentWidth: CGFloat = 10
+    private static let threadColors: [UIColor] = [
+        UIColor.orange,
+        UIColor(red: 0.20, green: 0.60, blue: 0.86, alpha: 1),
+        UIColor(red: 0.30, green: 0.69, blue: 0.31, alpha: 1),
+        UIColor(red: 0.61, green: 0.35, blue: 0.71, alpha: 1),
+        UIColor(red: 0.90, green: 0.30, blue: 0.24, alpha: 1),
+        UIColor(red: 0.10, green: 0.65, blue: 0.60, alpha: 1)
+    ]
+    private static let threadBarTag = 9001
 
     init(post: Post) {
         self.post = post
@@ -467,8 +485,20 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         return label.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
     }
 
+    private func moreStubText(for comment: Comment) -> String {
+        guard comment.moreCount > 0 else { return "View more replies on reddit" }
+        let noun = comment.moreCount == 1 ? "reply" : "replies"
+        return "\(comment.moreCount) more \(noun) - view on reddit"
+    }
+
     private func rowHeight(for comment: Comment, width: CGFloat) -> CGFloat {
-        let textWidth = width - 30
+        let indent = CGFloat(min(comment.depth, PostVC.maxIndentDepth)) * PostVC.indentWidth
+        let textWidth = width - 30 - indent
+        if comment.isMoreStub {
+            let height = measureHeight(text: moreStubText(for: comment), font: PostVC.moreStubFont,
+                                        width: textWidth, numberOfLines: 0)
+            return height + 24
+        }
         let body = HTMLUtil.stripTags(comment.bodyHTML)
         let bodyHeight = measureHeight(text: body, font: PostVC.bodyFont, width: textWidth, numberOfLines: 0)
         return bodyHeight + PostVC.authorFont.lineHeight + 24
@@ -482,20 +512,68 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         return comments.count
     }
 
+    // Left-edge colored bars, one per depth level (cycling PostVC.threadColors), overlaid
+    // behind the cell's own indentationLevel-shifted content — visually separates nested
+    // reply chains, similar to Reddit's official app/mobile-web comment threading.
+    private func addThreadBars(to cell: UITableViewCell, depth: Int, height: CGFloat) {
+        cell.contentView.viewWithTag(PostVC.threadBarTag)?.removeFromSuperview()
+        guard depth > 0 else { return }
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: CGFloat(depth) * PostVC.indentWidth, height: height))
+        container.tag = PostVC.threadBarTag
+        container.isUserInteractionEnabled = false
+        container.backgroundColor = .clear
+        for level in 0..<depth {
+            let bar = UIView(frame: CGRect(x: CGFloat(level) * PostVC.indentWidth + 4, y: 0, width: 2, height: height))
+            bar.backgroundColor = PostVC.threadColors[level % PostVC.threadColors.count]
+            container.addSubview(bar)
+        }
+        cell.contentView.addSubview(container)
+    }
+
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: cellId) ?? UITableViewCell(style: .subtitle, reuseIdentifier: cellId)
         let comment = comments[indexPath.row]
-        cell.textLabel?.text = HTMLUtil.stripTags(comment.bodyHTML)
-        cell.textLabel?.font = PostVC.bodyFont
-        cell.textLabel?.numberOfLines = 0
-        var detail = comment.author
-        if let createdAt = comment.createdAt {
-            detail += " - \(RelativeTime.string(from: createdAt))"
+        let depth = min(comment.depth, PostVC.maxIndentDepth)
+        cell.indentationLevel = depth
+        cell.indentationWidth = PostVC.indentWidth
+
+        if comment.isMoreStub {
+            cell.selectionStyle = .default
+            cell.textLabel?.text = moreStubText(for: comment)
+            cell.textLabel?.font = PostVC.moreStubFont
+            cell.textLabel?.textColor = UIColor.gray
+            cell.textLabel?.numberOfLines = 0
+            cell.detailTextLabel?.text = nil
+        } else {
+            cell.selectionStyle = .none
+            cell.textLabel?.text = HTMLUtil.stripTags(comment.bodyHTML)
+            cell.textLabel?.font = PostVC.bodyFont
+            cell.textLabel?.textColor = UIColor.black
+            cell.textLabel?.numberOfLines = 0
+            var detail = comment.author
+            if let score = comment.score {
+                detail += " - \(score) pts"
+            }
+            if let createdAt = comment.createdAt {
+                detail += " - \(RelativeTime.string(from: createdAt))"
+            }
+            cell.detailTextLabel?.text = detail
+            cell.detailTextLabel?.font = PostVC.authorFont
+            cell.detailTextLabel?.textColor = UIColor.orange
         }
-        cell.detailTextLabel?.text = detail
-        cell.detailTextLabel?.font = PostVC.authorFont
-        cell.detailTextLabel?.textColor = UIColor.orange
+
+        addThreadBars(to: cell, depth: depth, height: rowHeight(for: comment, width: tableView.bounds.width))
         return cell
+    }
+
+    // "More replies" stub rows aren't expandable (would need Reddit's api/morechildren
+    // endpoint, presumed blocked by the same bot wall as .json) — tapping one opens the
+    // full thread on reddit.com instead, same openURL pattern as linkTapped().
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        tableView.deselectRow(at: indexPath, animated: true)
+        let comment = comments[indexPath.row]
+        guard comment.isMoreStub, let url = URL(string: post.permalink) else { return }
+        UIApplication.shared.openURL(url)
     }
 }
 

@@ -120,9 +120,15 @@ final class RedditAPI {
         }
     }
 
+    /// Scrapes the same plain (non-JS) permalink HTML page used by fetchGalleryImageURLs —
+    /// unlike the `.rss` comments feed (flat, document-ordered, no score/threading data at
+    /// all), this page server-renders the full nested reply tree as real `<div class="child">`
+    /// DOM nesting, which is what makes comment depth/score possible (see CommentHTMLParser
+    /// below). No trailing slug segment needed — CurlFetcher follows Reddit's redirect to the
+    /// canonical slugged URL (curl_bridge_set_follow_redirects, already set in CurlFetcher).
     static func fetchComments(subreddit: String, postId: String, forceRefresh: Bool = false,
                                completion: @escaping ([Comment], Error?) -> Void) {
-        let path = "https://old.reddit.com/r/\(subreddit)/comments/\(postId)/.rss"
+        let path = "https://old.reddit.com/r/\(subreddit)/comments/\(postId)/"
 
         guard let url = URL(string: path) else {
             completion([], NSError(domain: "RedditAPI", code: -1,
@@ -132,8 +138,8 @@ final class RedditAPI {
 
         if !forceRefresh, let cached = FeedCache.data(forKey: path, maxAge: commentsCacheMaxAge) {
             parseQueue.async {
-                let entries = AtomFeedParser.parseEntries(data: cached)
-                let comments = entries.compactMap { Comment(entry: $0) }
+                let html = String(data: cached, encoding: .utf8) ?? ""
+                let comments = CommentHTMLParser.parseComments(fromHTML: html)
                 DispatchQueue.main.async { completion(comments, nil) }
             }
             return
@@ -146,8 +152,8 @@ final class RedditAPI {
             }
             FeedCache.store(data, forKey: path)
             parseQueue.async {
-                let entries = AtomFeedParser.parseEntries(data: data)
-                let comments = entries.compactMap { Comment(entry: $0) }
+                let html = String(data: data, encoding: .utf8) ?? ""
+                let comments = CommentHTMLParser.parseComments(fromHTML: html)
                 DispatchQueue.main.async { completion(comments, nil) }
             }
         }
@@ -186,5 +192,231 @@ private struct GalleryHTMLParser {
             }
         }
         return results
+    }
+}
+
+/// Manual scanner (no NSRegularExpression, same convention as GalleryHTMLParser/HTMLUtil) for
+/// old.reddit.com's server-rendered nested comment tree on the plain permalink page:
+///   <div class=" thing id-t1_XXX ... comment " data-type="comment" data-fullname="t1_XXX"
+///        data-author="..." ...>
+///     <div class="entry unvoted">
+///       <p class="tagline">
+///         <span class="score unvoted" title="5297">5297 points</span>
+///         <time datetime="2026-07-23T12:27:03+00:00" ...>
+///       <div class="md">...comment body...</div>
+///     </div>
+///     <div class="child">  <!-- present only when there are replies -->
+///       <div class=" thing id-t1_YYY ... comment " ...>  <!-- one level deeper -->
+///     </div>
+///   </div>
+/// A truncated branch renders a "load more comments" stub instead of continuing to expand:
+///   <div class=" thing id-t1_XXX ... morechildren " data-type="morechildren" ...>
+///     <span class="morecomments"><a ...>load more comments<span class="gray">
+///       &nbsp;(1 reply)</span></a></span>
+/// Expanding those needs Reddit's `api/morechildren` endpoint (presumed blocked by the same
+/// bot wall as `.json`), so they're surfaced as a non-expandable Comment(isMoreStub: true).
+///
+/// Depth of a comment == the number of `<div class="child">` wrapper divs currently enclosing
+/// it — tracked via a stack-based linear scan of every `<div>`/`</div>` tag in document order.
+/// This is safe because Reddit's markdown-to-HTML renderer for comment bodies (the "md" div's
+/// content) never emits raw `<div>` tags (confirmed by inspecting a real 1100+-comment thread),
+/// so div nesting stays balanced around comment content.
+// Byte-array/integer-offset based scanner — NOT Substring/String.Index based. A prior
+// Substring-based implementation of this parser was profiled against a real ~800KB permalink
+// page and found to be O(n²)-like: Substring.range(of:) bridges to NSString (a copy) on every
+// single call, so its cost scales with the REMAINING substring length, not the actual gap to
+// the next match. That made real (200+ comment) threads take minutes to parse — the direct
+// cause of a "stuck on Loading..." bug. This version scans a plain [UInt8] with a hand-written
+// find() that's a true early-exit forward byte scan (cost proportional to the actual gap).
+// Small extracted spans (ids, authors, scores, timestamps, body HTML) are decoded to String
+// only once, at the point of final extraction — never during scanning.
+private struct CommentHTMLParser {
+    private enum DivToken {
+        case open(tagStart: Int)
+        case close(tagStart: Int)
+    }
+
+    static func parseComments(fromHTML html: String) -> [Comment] {
+        let bytes = Array(html.utf8)
+        var results: [Comment] = []
+        // One entry per currently-open <div>: true if that div's own class is exactly
+        // "child" (a reply-nesting wrapper) — used to pop currentDepth back down correctly
+        // when it closes, without needing to re-scan the whole stack every time.
+        var stack: [Bool] = []
+        var currentDepth = 0
+        var cursor = 0
+
+        while let token = nextDivToken(in: bytes, from: cursor) {
+            switch token {
+            case .close(let tagStart):
+                guard let tagEnd = scanToTagEnd(bytes, from: tagStart) else { return results }
+                if let wasChildWrapper = stack.popLast(), wasChildWrapper {
+                    currentDepth -= 1
+                }
+                cursor = tagEnd
+
+            case .open(let tagStart):
+                guard let tagEnd = scanToTagEnd(bytes, from: tagStart) else { return results }
+                let tagText = String(decoding: bytes[tagStart..<tagEnd], as: UTF8.self)
+                let depth = currentDepth
+
+                let classValue = attributeValue(in: tagText, name: "class") ?? ""
+                let isChildWrapper = classValue.trimmingCharacters(in: .whitespaces) == "child"
+                stack.append(isChildWrapper)
+                if isChildWrapper { currentDepth += 1 }
+
+                switch attributeValue(in: tagText, name: "data-type") {
+                case "comment":
+                    if let comment = parseCommentEntry(tagText: tagText, bytes: bytes, from: tagEnd, depth: depth) {
+                        results.append(comment)
+                    }
+                case "morechildren":
+                    if let stub = parseMoreStub(tagText: tagText, bytes: bytes, from: tagEnd, depth: depth) {
+                        results.append(stub)
+                    }
+                default:
+                    break
+                }
+                cursor = tagEnd
+            }
+        }
+        return results
+    }
+
+    private static func find(_ pattern: [UInt8], in bytes: [UInt8], from: Int) -> Int? {
+        let n = bytes.count
+        let m = pattern.count
+        guard m > 0, from >= 0, from + m <= n else { return nil }
+        let first = pattern[0]
+        var i = from
+        let last = n - m
+        while i <= last {
+            if bytes[i] == first {
+                var j = 1
+                while j < m, bytes[i + j] == pattern[j] { j += 1 }
+                if j == m { return i }
+            }
+            i += 1
+        }
+        return nil
+    }
+
+    private static func find(_ pattern: String, in bytes: [UInt8], from: Int) -> Int? {
+        find(Array(pattern.utf8), in: bytes, from: from)
+    }
+
+    private static func nextDivToken(in bytes: [UInt8], from: Int) -> DivToken? {
+        let openIdx = find("<div", in: bytes, from: from)
+        let closeIdx = find("</div", in: bytes, from: from)
+        switch (openIdx, closeIdx) {
+        case (nil, nil): return nil
+        case (let o?, nil): return .open(tagStart: o)
+        case (nil, let c?): return .close(tagStart: c)
+        case (let o?, let c?): return o <= c ? .open(tagStart: o) : .close(tagStart: c)
+        }
+    }
+
+    // Scans forward from a "<div"/"</div" marker to the end of that tag (its own, unquoted
+    // ">"), tracking quote state so a ">" inside an attribute value (e.g. an onclick handler
+    // string) doesn't end the tag early.
+    private static func scanToTagEnd(_ bytes: [UInt8], from start: Int) -> Int? {
+        let dquote: UInt8 = 0x22, squote: UInt8 = 0x27, gt: UInt8 = 0x3E
+        var inQuote: UInt8?
+        var i = start
+        let n = bytes.count
+        while i < n {
+            let b = bytes[i]
+            if let q = inQuote {
+                if b == q { inQuote = nil }
+            } else if b == dquote || b == squote {
+                inQuote = b
+            } else if b == gt {
+                return i + 1
+            }
+            i += 1
+        }
+        return nil
+    }
+
+    private static func attributeValue(in tag: String, name: String) -> String? {
+        guard let range = tag.range(of: "\(name)=\"") else { return nil }
+        let after = tag[range.upperBound...]
+        guard let end = after.firstIndex(of: "\"") else { return nil }
+        return String(after[..<end])
+    }
+
+    // Bounds the search for this comment's own tagline/score/time/body to just its own entry
+    // section — stopping at whichever comes first: a nested reply's "child" wrapper, or the
+    // next sibling/nested "thing" div's own class attribute (every comment/stub thing div's
+    // class contains "id-t1_..."). Either marker is guaranteed to appear AFTER this comment's
+    // own tagline/md (which are always emitted first), so this never grabs a wrong comment's
+    // data even for a comment with no replies (no "child" div follows it at all).
+    private static func ownContentWindowEnd(bytes: [UInt8], from: Int) -> Int {
+        let n = bytes.count
+        var cutoff = n
+        if let c = find("<div class=\"child\"", in: bytes, from: from) { cutoff = min(cutoff, c) }
+        if let t = find("id-t1_", in: bytes, from: from) { cutoff = min(cutoff, t) }
+        return cutoff
+    }
+
+    private static func decode(_ bytes: [UInt8], _ range: Range<Int>) -> String {
+        String(decoding: bytes[range], as: UTF8.self)
+    }
+
+    private static func parseCommentEntry(tagText: String, bytes: [UInt8], from: Int, depth: Int) -> Comment? {
+        guard let fullname = attributeValue(in: tagText, name: "data-fullname") else { return nil }
+        let author = attributeValue(in: tagText, name: "data-author") ?? "[deleted]"
+        let windowEnd = ownContentWindowEnd(bytes: bytes, from: from)
+
+        var score: Int?
+        if let scoreIdx = find("class=\"score unvoted\"", in: bytes, from: from), scoreIdx < windowEnd,
+           let titleIdx = find("title=\"", in: bytes, from: scoreIdx), titleIdx < windowEnd {
+            let digitsStart = titleIdx + "title=\"".utf8.count
+            if let quoteEnd = find("\"", in: bytes, from: digitsStart), quoteEnd <= windowEnd {
+                score = Int(decode(bytes, digitsStart..<quoteEnd))
+            }
+        }
+
+        var createdAt: Date?
+        if let timeIdx = find("datetime=\"", in: bytes, from: from), timeIdx < windowEnd {
+            let valueStart = timeIdx + "datetime=\"".utf8.count
+            if let quoteEnd = find("\"", in: bytes, from: valueStart), quoteEnd <= windowEnd {
+                createdAt = AtomDate.parse(decode(bytes, valueStart..<quoteEnd))
+            }
+        }
+
+        var bodyHTML = ""
+        if let mdIdx = find("<div class=\"md\">", in: bytes, from: from), mdIdx < windowEnd {
+            let bodyStart = mdIdx + "<div class=\"md\">".utf8.count
+            if let closeIdx = find("</div>", in: bytes, from: bodyStart) {
+                bodyHTML = decode(bytes, bodyStart..<closeIdx)
+            }
+        }
+
+        return Comment(id: fullname, author: author, bodyHTML: bodyHTML, createdAt: createdAt,
+                        depth: depth, score: score)
+    }
+
+    private static func parseMoreStub(tagText: String, bytes: [UInt8], from: Int, depth: Int) -> Comment? {
+        guard let fullname = attributeValue(in: tagText, name: "data-fullname") else { return nil }
+        let windowEnd = ownContentWindowEnd(bytes: bytes, from: from)
+
+        var moreCount = 0
+        if let grayIdx = find("class=\"gray\"", in: bytes, from: from), grayIdx < windowEnd {
+            let afterGray = grayIdx + "class=\"gray\"".utf8.count
+            if let openParen = find("(", in: bytes, from: afterGray), openParen < windowEnd,
+               let closeParen = find(")", in: bytes, from: openParen) {
+                let digitsText = decode(bytes, (openParen + 1)..<closeParen)
+                let digits = digitsText.prefix(while: { $0.isNumber })
+                moreCount = Int(digits) ?? 0
+            }
+        }
+
+        // Prefix "more_" — this stub's own data-fullname is the SAME id as the comment whose
+        // further replies were truncated (it's a "load more replies to this comment"
+        // placeholder, not a new distinct comment), so keep it visually distinct from that
+        // comment's own row id even though nothing in this app currently keys off Comment.id.
+        return Comment(id: "more_\(fullname)", author: "", bodyHTML: "", createdAt: nil,
+                        depth: depth, score: nil, isMoreStub: true, moreCount: moreCount)
     }
 }
