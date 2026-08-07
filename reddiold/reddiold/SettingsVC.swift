@@ -1,6 +1,7 @@
 import UIKit
 
-/// Settings screen — currently a single "Clear Cache" action that wipes the disk feed/
+/// Settings screen — the app-wide listing sort, the cache auto-refresh TTL, and a
+/// "Clear Cache" action that wipes the disk feed/
 /// comment/thumbnail cache (FeedCache) and the in-memory thumbnail cache, then broadcasts
 /// PostListVC.cacheDidClearNotification so any live Home/Subreddit screen drops its
 /// per-sort in-memory cache too. No UIAlertController confirmation (iOS8+ only) — just an
@@ -9,6 +10,7 @@ class SettingsVC: UIViewController {
     private var sizeLabel: UILabel?
     private var statusLabel: UILabel?
     private var ttlControl: UISegmentedControl?
+    private var sortControl: UISegmentedControl?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -72,6 +74,35 @@ class SettingsVC: UIViewController {
         ttlHint.textColor = UIColor.gray
         ttlHint.text = "Cached posts are always shown instantly. \"Never\" means only pull-to-refresh fetches new content."
         view.addSubview(ttlHint)
+
+        let sortTitle = UILabel(frame: CGRect(x: 16, y: 258, width: bounds.width - 32, height: 20))
+        sortTitle.textAlignment = .center
+        sortTitle.font = UIFont.systemFont(ofSize: 13)
+        sortTitle.textColor = UIColor.darkGray
+        sortTitle.text = "Sort posts by:"
+        view.addSubview(sortTitle)
+
+        let sortItems = AppSettings.listingSortOptions.map { $0.displayName }
+        let sort = UISegmentedControl(items: sortItems)
+        sort.frame = CGRect(x: 16, y: 282, width: bounds.width - 32, height: 30)
+        sort.tintColor = UIColor.orange
+        sort.selectedSegmentIndex = AppSettings.listingSortIndex
+        sort.addTarget(self, action: #selector(sortChanged), for: .valueChanged)
+        view.addSubview(sort)
+        sortControl = sort
+
+        let sortHint = UILabel(frame: CGRect(x: 16, y: 316, width: bounds.width - 32, height: 32))
+        sortHint.textAlignment = .center
+        sortHint.numberOfLines = 0
+        sortHint.font = UIFont.systemFont(ofSize: 11)
+        sortHint.textColor = UIColor.gray
+        sortHint.text = "Applies to the front page, subreddits and favorites."
+        view.addSubview(sortHint)
+    }
+
+    @objc private func sortChanged() {
+        guard let index = sortControl?.selectedSegmentIndex else { return }
+        AppSettings.listingSortIndex = index
     }
 
     @objc private func ttlChanged() {

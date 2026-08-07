@@ -15,21 +15,23 @@ class FavoritesVC: PostListVC {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = "Favorites"
-        // "New" makes more sense than a single combined Hot ranking across several subreddits.
-        defaultSortIndex = 1
         navigationItem.rightBarButtonItem = UIBarButtonItem(title: "Edit", style: .plain, target: self, action: #selector(editTapped))
     }
 
+    // Recompute the "+"-joined key *before* calling super: resetForReload() tears the table
+    // down, which makes super's own viewWillAppear (sort-changed check) correctly bail out
+    // instead of firing a fetch for the favorites list we're about to replace.
     override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
         let names = FavoritesStore.all()
         let key = names.joined(separator: "+")
-        guard key != lastFavoritesKey else { return }
-        lastFavoritesKey = key
-        subreddit = names.isEmpty ? nil : key
-        resetForReload()
-        emptyLabel?.removeFromSuperview()
-        emptyLabel = nil
+        if key != lastFavoritesKey {
+            lastFavoritesKey = key
+            subreddit = names.isEmpty ? nil : key
+            resetForReload()
+            emptyLabel?.removeFromSuperview()
+            emptyLabel = nil
+        }
+        super.viewWillAppear(animated)
     }
 
     override func viewDidAppear(_ animated: Bool) {

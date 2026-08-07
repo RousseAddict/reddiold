@@ -8,12 +8,17 @@ import Foundation
 enum PostMediaKind: Equatable {
     case gallery
     case video(videoId: String)
+    /// A link straight to a single image file (i.redd.it, i.imgur.com, ...). Unlike a gallery
+    /// this needs no extra scrape — the href IS the full-resolution image URL, so it can be
+    /// shown in-app instead of being handed off to Safari.
+    case image(url: String)
     case other
 
     var dictionaryValue: String {
         switch self {
         case .gallery: return "gallery"
         case .video(let videoId): return "video:\(videoId)"
+        case .image(let url): return "image:\(url)"
         case .other: return "other"
         }
     }
@@ -24,6 +29,8 @@ enum PostMediaKind: Equatable {
             self = .gallery
         } else if value.hasPrefix("video:") {
             self = .video(videoId: String(value.dropFirst("video:".count)))
+        } else if value.hasPrefix("image:") {
+            self = .image(url: String(value.dropFirst("image:".count)))
         } else {
             self = .other
         }
@@ -123,7 +130,23 @@ struct Post {
             let videoId = String(href[range.upperBound...].split(separator: "/").first ?? "")
             if !videoId.isEmpty { return .video(videoId: videoId) }
         }
+        if isDirectImageURL(href) { return .image(url: href) }
         return .other
+    }
+
+    // Extension-based, which covers i.redd.it / i.imgur.com / preview.redd.it and any other
+    // host that links straight at an image file. Query string and fragment are stripped first
+    // (preview.redd.it appends ?width=&auto=&s=). Deliberately excludes .webp: UIImage on
+    // iOS 6/7/8 can't decode it, so those keep falling through to .other and open in Safari.
+    static func isDirectImageURL(_ href: String) -> Bool {
+        var path = href
+        if let q = path.range(of: "?") { path = String(path[..<q.lowerBound]) }
+        if let f = path.range(of: "#") { path = String(path[..<f.lowerBound]) }
+        let lowered = path.lowercased()
+        for ext in [".jpg", ".jpeg", ".png", ".gif"] where lowered.hasSuffix(ext) {
+            return true
+        }
+        return false
     }
 
     // Plist-safe dictionary representation for UserDefaults storage (SavedPostsStore).

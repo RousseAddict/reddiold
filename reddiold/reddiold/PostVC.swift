@@ -117,13 +117,28 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         titleLabel.text = post.title
         y += titleHeight + 4
 
-        var detail = "r/\(post.subreddit) - \(post.author)"
+        // The subreddit name is its own tappable label rather than part of the detail line,
+        // so tapping it opens the subreddit without the author/date also being a hit target.
+        let subredditText = "r/\(post.subreddit)"
+        let subredditWidth = min(measureWidth(text: subredditText, font: PostVC.authorFont), contentWidth)
+        let detailHeight = measureHeight(text: subredditText, font: PostVC.authorFont, width: contentWidth, numberOfLines: 1)
+        let subredditLabel = UILabel(frame: CGRect(x: 12, y: y, width: subredditWidth, height: detailHeight))
+        subredditLabel.font = PostVC.authorFont
+        subredditLabel.backgroundColor = UIColor.clear
+        subredditLabel.isUserInteractionEnabled = true
+        let subredditAttributed = NSMutableAttributedString(string: subredditText)
+        let subredditRange = NSRange(location: 0, length: subredditText.count)
+        subredditAttributed.addAttribute(.foregroundColor, value: UIColor.orange, range: subredditRange)
+        subredditAttributed.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: subredditRange)
+        subredditLabel.attributedText = subredditAttributed
+        subredditLabel.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(subredditTapped)))
+
+        var detail = " - \(post.author)"
         if let createdAt = post.createdAt {
             detail += " - \(RelativeTime.string(from: createdAt))"
         }
-        let detailHeight = measureHeight(text: detail, font: PostVC.authorFont, width: contentWidth, numberOfLines: 0)
-        let detailLabel = UILabel(frame: CGRect(x: 12, y: y, width: contentWidth, height: detailHeight))
-        detailLabel.numberOfLines = 0
+        let detailLabel = UILabel(frame: CGRect(x: 12 + subredditWidth, y: y,
+                                                 width: contentWidth - subredditWidth, height: detailHeight))
         detailLabel.font = PostVC.authorFont
         detailLabel.textColor = UIColor.orange
         detailLabel.backgroundColor = UIColor.clear
@@ -164,6 +179,8 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
                 mediaBadge = makeMediaBadge(text: "Gallery - tap to view", over: iv.frame)
             case .video:
                 mediaBadge = makeMediaBadge(text: "Play Video", over: iv.frame)
+            case .image:
+                mediaBadge = makeMediaBadge(text: "Tap to view full image", over: iv.frame)
             case .other:
                 break
             }
@@ -195,6 +212,7 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
 
         let header = UIView(frame: CGRect(x: 0, y: 0, width: width, height: y))
         header.addSubview(titleLabel)
+        header.addSubview(subredditLabel)
         header.addSubview(detailLabel)
         if let ll = linkLabel { header.addSubview(ll) }
         if let iv = imageView { header.addSubview(iv) }
@@ -238,11 +256,15 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
             openGallery()
         case .video(let videoId):
             playVideo(videoId: videoId)
+        case .image(let url):
+            openFullImage(urlString: url)
         case .other:
             showFullImage()
         }
     }
 
+    // Fallback for posts with no direct image URL (self-text posts with a preview, unclassified
+    // links): all we have is the ~140px RSS preview thumbnail already on screen, so blow that up.
     private func showFullImage() {
         guard let image = thumbnailView?.image else { return }
         let preview = ImagePreviewVC(image: image)
@@ -250,8 +272,22 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         present(preview, animated: true, completion: nil)
     }
 
+    // The post links straight at an image file, so show the real thing rather than the tiny
+    // RSS preview thumbnail. Reuses GalleryPagerVC with a single URL — it already does the
+    // async fetch, caching, black full-screen backdrop, Close button and tap-to-zoom, and it
+    // hides its page control when there's only one page.
+    private func openFullImage(urlString: String) {
+        let pager = GalleryPagerVC(imageURLs: [urlString])
+        pager.modalPresentationStyle = .fullScreen
+        present(pager, animated: true, completion: nil)
+    }
+
     // openURL(_:) (not the iOS10+ open(_:options:completionHandler:)) is the oldest
     // universally-available way to hand a URL to Safari — safe on iOS 6/7/8 alike.
+    @objc private func subredditTapped() {
+        navigationController?.pushViewController(SubredditVC(subreddit: post.subreddit), animated: true)
+    }
+
     @objc private func linkTapped() {
         guard let urlString = post.linkURL, let url = URL(string: urlString) else { return }
         UIApplication.shared.openURL(url)
@@ -483,6 +519,15 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         label.lineBreakMode = .byWordWrapping
         label.text = text
         return label.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
+    }
+
+    private func measureWidth(text: String, font: UIFont) -> CGFloat {
+        let label = UILabel()
+        label.font = font
+        label.numberOfLines = 1
+        label.text = text
+        let unbounded = CGFloat.greatestFiniteMagnitude
+        return ceil(label.sizeThatFits(CGSize(width: unbounded, height: unbounded)).width)
     }
 
     private func moreStubText(for comment: Comment) -> String {

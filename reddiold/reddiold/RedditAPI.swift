@@ -15,20 +15,69 @@ final class RedditAPI {
     // taps within the same sitting without needing a user-facing setting.
     private static let commentsCacheMaxAge: TimeInterval = 120 // 2 min
 
+    /// hot/rising apply only to plain listings; relevance/comments only to search results.
+    /// new/top are valid for both.
     enum Sort: String {
-        case hot, new, top, rising
+        case hot, new, top, rising, relevance, comments
+
+        /// Segmented-control label. "Relevant" rather than "Relevance" purely to fit four
+        /// segments across a 320pt-wide screen.
+        var displayName: String {
+            switch self {
+            case .hot: return "Hot"
+            case .new: return "New"
+            case .top: return "Top"
+            case .rising: return "Rising"
+            case .relevance: return "Relevant"
+            case .comments: return "Comments"
+            }
+        }
     }
 
-    /// subreddit == nil fetches the front page; a "+"-joined name (e.g. "a+b+c") fetches
-    /// Reddit's ad-hoc multireddit combined listing (confirmed working unauthenticated,
-    /// server-side chronologically interleaved, gracefully skips any joined name that's
-    /// invalid/banned/private rather than erroring the whole request) — used by FavoritesFeedVC.
-    private static func listingPath(subreddit: String?, sort: Sort) -> String {
+    /// Percent-encodes a search term for use in a query string. Hand-rolled because
+    /// `addingPercentEncoding(withAllowedCharacters:)` / `CharacterSet.urlQueryAllowed` are
+    /// iOS 7+ and crash on iOS 6. Escapes every byte outside RFC 3986's unreserved set.
+    static func percentEncodeQuery(_ raw: String) -> String {
+        var out = ""
+        for byte in Array(raw.utf8) {
+            let isUnreserved = (byte >= 0x41 && byte <= 0x5A)   // A-Z
+                || (byte >= 0x61 && byte <= 0x7A)               // a-z
+                || (byte >= 0x30 && byte <= 0x39)               // 0-9
+                || byte == 0x2D || byte == 0x2E                 // - .
+                || byte == 0x5F || byte == 0x7E                 // _ ~
+            if isUnreserved {
+                out.append(Character(UnicodeScalar(byte)))
+            } else {
+                out += String(format: "%%%02X", byte)
+            }
+        }
+        return out
+    }
+
+    /// With `query == nil` this is a plain listing: subreddit == nil fetches the front page;
+    /// a "+"-joined name (e.g. "a+b+c") fetches Reddit's ad-hoc multireddit combined listing
+    /// (confirmed working unauthenticated, server-side chronologically interleaved, gracefully
+    /// skips any joined name that's invalid/banned/private rather than erroring the whole
+    /// request) — used by FavoritesVC.
+    ///
+    /// With a `query` it's a post search instead (confirmed HTTP 200 unauthenticated): either
+    /// site-wide, or restricted to one subreddit when `subreddit` is also set. Search results
+    /// come back as ordinary `t3_` Atom entries — same shape as a listing, so `Post(entry:)`
+    /// parses them unchanged. The returned path doubles as the FeedCache key, so two different
+    /// queries (or sorts) never share cached content.
+    private static func listingPath(subreddit: String?, query: String?, sort: Sort) -> String {
         var path = "https://old.reddit.com"
         if let subreddit = subreddit, !subreddit.isEmpty {
             path += "/r/\(subreddit)"
         }
-        path += "/\(sort.rawValue)/.rss"
+        guard let query = query, !query.isEmpty else {
+            path += "/\(sort.rawValue)/.rss"
+            return path
+        }
+        path += "/search/.rss?q=\(percentEncodeQuery(query))&sort=\(sort.rawValue)"
+        if let subreddit = subreddit, !subreddit.isEmpty {
+            path += "&restrict_sr=on"
+        }
         return path
     }
 
@@ -36,15 +85,16 @@ final class RedditAPI {
     /// cached — PostListVC uses this both for the "Updated Xm ago" label and to decide
     /// whether cached content is stale enough (per AppSettings.autoRefreshTTL) to silently
     /// refresh in the background.
-    static func listingCacheDate(subreddit: String?, sort: Sort) -> Date? {
-        return FeedCache.modificationDate(forKey: listingPath(subreddit: subreddit, sort: sort))
+    static func listingCacheDate(subreddit: String?, query: String? = nil, sort: Sort) -> Date? {
+        return FeedCache.modificationDate(forKey: listingPath(subreddit: subreddit, query: query, sort: sort))
     }
 
     /// Parses whatever is currently on disk for this listing, regardless of age. Calls back
     /// with an empty array (not an error) if nothing has ever been cached — this is only
     /// meant for the "show stale content instantly" step, not a real fetch.
-    static func cachedListing(subreddit: String?, sort: Sort, completion: @escaping ([Post]) -> Void) {
-        guard let data = FeedCache.data(forKey: listingPath(subreddit: subreddit, sort: sort)) else {
+    static func cachedListing(subreddit: String?, query: String? = nil, sort: Sort,
+                               completion: @escaping ([Post]) -> Void) {
+        guard let data = FeedCache.data(forKey: listingPath(subreddit: subreddit, query: query, sort: sort)) else {
             completion([])
             return
         }
@@ -58,9 +108,9 @@ final class RedditAPI {
     /// Always hits the network and re-stores the fresh response to disk — used for the
     /// initial cold load (nothing cached yet), pull-to-refresh/retry (explicit user intent),
     /// and PostListVC's TTL-based silent background refresh of stale cached content.
-    static func fetchListing(subreddit: String?, sort: Sort = .hot,
+    static func fetchListing(subreddit: String?, query: String? = nil, sort: Sort = .hot,
                               completion: @escaping ([Post], Error?) -> Void) {
-        let path = listingPath(subreddit: subreddit, sort: sort)
+        let path = listingPath(subreddit: subreddit, query: query, sort: sort)
         guard let url = URL(string: path) else {
             completion([], NSError(domain: "RedditAPI", code: -1,
                                     userInfo: [NSLocalizedDescriptionKey: "Invalid URL"]))
@@ -157,6 +207,67 @@ final class RedditAPI {
                 DispatchQueue.main.async { completion(comments, nil) }
             }
         }
+    }
+
+    /// Subreddit discovery: /subreddits/search/.rss?q= (confirmed HTTP 200 unauthenticated).
+    /// Unlike post search these entries are `t5_` and have their own shape, so they parse into
+    /// SubredditResult rather than Post. Cached on disk keyed by the full URL; subreddit
+    /// descriptions change rarely and the point of the cache is to survive a user re-running
+    /// the same search, which is exactly what trips Reddit's rate limiter.
+    static func searchSubreddits(query: String, forceRefresh: Bool = false,
+                                  completion: @escaping ([SubredditResult], Error?) -> Void) {
+        let path = "https://old.reddit.com/subreddits/search/.rss?q=\(percentEncodeQuery(query))"
+        guard let url = URL(string: path) else {
+            completion([], NSError(domain: "RedditAPI", code: -1,
+                                    userInfo: [NSLocalizedDescriptionKey: "Invalid URL"]))
+            return
+        }
+
+        if !forceRefresh, let cached = FeedCache.data(forKey: path) {
+            parseQueue.async {
+                let results = AtomFeedParser.parseEntries(data: cached).compactMap { SubredditResult(entry: $0) }
+                DispatchQueue.main.async { completion(results, nil) }
+            }
+            return
+        }
+
+        CurlFetcher.fetch(url: url, userAgent: userAgent) { data, error in
+            guard let data = data, error == nil else {
+                DispatchQueue.main.async { completion([], error) }
+                return
+            }
+            FeedCache.store(data, forKey: path)
+            parseQueue.async {
+                let results = AtomFeedParser.parseEntries(data: data).compactMap { SubredditResult(entry: $0) }
+                DispatchQueue.main.async { completion(results, nil) }
+            }
+        }
+    }
+}
+
+/// One hit from /subreddits/search/.rss (Atom fullname prefix "t5_").
+/// Note the entry's <title> is the subreddit's *display* title ("Retro Reddit"), NOT its r/
+/// name — the only place the actual name appears is the <link href> ("…/r/Retro/"), so that's
+/// what navigation has to use. Subscriber counts aren't exposed by RSS at all.
+struct SubredditResult {
+    let name: String
+    let displayTitle: String
+    let summary: String?
+
+    init?(entry: AtomEntry) {
+        guard entry.id.hasPrefix("t5_"),
+              let name = SubredditResult.extractName(fromLink: entry.link), !name.isEmpty else { return nil }
+        self.name = name
+        self.displayTitle = entry.title
+        let text = HTMLUtil.stripTags(entry.contentHTML)
+        self.summary = text.isEmpty ? nil : text
+    }
+
+    /// "https://old.reddit.com/r/Retro/" -> "Retro"
+    static func extractName(fromLink link: String) -> String? {
+        guard let range = link.range(of: "/r/") else { return nil }
+        let rest = link[range.upperBound...]
+        return String(rest.split(separator: "/").first ?? "")
     }
 }
 

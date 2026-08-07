@@ -28,4 +28,28 @@ final class AppSettings {
     static var autoRefreshTTL: TimeInterval? {
         return autoRefreshOptions[autoRefreshTTLIndex].seconds
     }
+
+    // MARK: - Default listing sort
+
+    private static let sortIndexKey = "reddiold.defaultListingSortIndex"
+    private static let defaultSortIndex = 0 // "Hot"
+
+    /// The sort every listing screen (Home/Subreddit/Favorites) uses. Chosen once in
+    /// Settings rather than per-screen: a segmented control on each listing invited rapid
+    /// tab-switching, which Reddit's rate limiter answers with an empty HTTP 429.
+    static let listingSortOptions: [RedditAPI.Sort] = [.hot, .new, .top, .rising]
+
+    static var listingSortIndex: Int {
+        get {
+            let defaults = UserDefaults.standard
+            guard defaults.object(forKey: sortIndexKey) != nil else { return defaultSortIndex }
+            let index = defaults.integer(forKey: sortIndexKey)
+            return (0..<listingSortOptions.count).contains(index) ? index : defaultSortIndex
+        }
+        set { UserDefaults.standard.set(newValue, forKey: sortIndexKey) }
+    }
+
+    static var listingSort: RedditAPI.Sort {
+        return listingSortOptions[listingSortIndex]
+    }
 }

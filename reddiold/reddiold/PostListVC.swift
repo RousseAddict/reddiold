@@ -1,29 +1,34 @@
 import UIKit
 
-/// Shared base for a Reddit post listing (front page or a specific subreddit): sort
-/// segmented control (Hot/New/Top/Rising), table of posts w/ date + thumbnail, pull-free
-/// refresh via cache, pushes PostVC on row tap. Subclasses (HomeVC, SubredditVC) just set
-/// `subreddit` and `title` in their own viewDidLoad (after calling super).
+/// Shared base for a Reddit post listing (front page or a specific subreddit): table of
+/// posts w/ date + thumbnail, pull-to-refresh, stale-while-revalidate caching, pushes
+/// PostVC on row tap. Subclasses (HomeVC, SubredditVC) just set `subreddit` and `title` in
+/// their own viewDidLoad (after calling super). The sort is a single app-wide preference
+/// (Settings > Sort posts by), not a per-screen control.
 class PostListVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
     var subreddit: String?
 
-    /// Which segmented-control tab is selected by default. Home/Subreddit start on Hot (0);
-    /// FavoritesVC overrides this to New (1) — a chronological blend across several
-    /// subreddits makes more sense than a single combined Hot ranking.
-    var defaultSortIndex: Int = 0
+    /// When set, this screen shows post *search* results for the term instead of a listing
+    /// (scoped to `subreddit` if that's also set, site-wide otherwise). See SearchResultsVC.
+    var searchQuery: String?
+
+    /// Pins this screen to one sort, ignoring the app-wide Settings preference. Only search
+    /// results use it (relevance — the listing sorts aren't meaningful for a query).
+    var sortOverride: RedditAPI.Sort?
 
     private var tableView: UITableView?
-    private var sortControl: UISegmentedControl?
     private var freshnessLabel: UILabel?
     private var spinner: UIActivityIndicatorView?
     private var errorLabel: UILabel?
     private var posts: [Post] = []
     private var postsCache: [RedditAPI.Sort: [Post]] = [:]
+    /// Which sort the rows on screen belong to — so viewWillAppear can notice the user
+    /// changed the Settings preference while this screen stayed alive underneath.
+    private var displayedSort: RedditAPI.Sort?
     private let cellId = "PostCell"
 
     private static let titleFont = UIFont.boldSystemFont(ofSize: 17)
     private static let detailFont = UIFont.systemFont(ofSize: 13)
-    private static let sorts: [RedditAPI.Sort] = [.hot, .new, .top, .rising]
     private static let thumbnailSize: CGFloat = 50
     private static let thumbnailCacheMaxAge: TimeInterval = 7 * 24 * 3600  // 1 week — images rarely change
     private static var thumbnailCache = NSCache<NSString, UIImage>()
@@ -66,17 +71,8 @@ class PostListVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         // already excludes the bar, unlike UIScreen.main.bounds (the full physical screen).
         let bounds = view.bounds
 
-        let segControlHeight: CGFloat = 30
-        let segControl = UISegmentedControl(items: ["Hot", "New", "Top", "Rising"])
-        segControl.frame = CGRect(x: 8, y: 2, width: bounds.width - 16, height: segControlHeight)
-        segControl.selectedSegmentIndex = defaultSortIndex
-        segControl.tintColor = UIColor.orange
-        segControl.addTarget(self, action: #selector(sortChanged), for: .valueChanged)
-        view.addSubview(segControl)
-        sortControl = segControl
-
         let freshnessHeight: CGFloat = 16
-        let freshness = UILabel(frame: CGRect(x: 8, y: segControlHeight + 4, width: bounds.width - 16, height: freshnessHeight))
+        let freshness = UILabel(frame: CGRect(x: 8, y: 4, width: bounds.width - 16, height: freshnessHeight))
         freshness.font = UIFont.systemFont(ofSize: 11)
         freshness.textColor = UIColor.gray
         freshness.textAlignment = .center
@@ -85,7 +81,7 @@ class PostListVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         freshnessLabel = freshness
 
         let availableHeight = bounds.height
-        let tableTop = segControlHeight + 4 + freshnessHeight + 2
+        let tableTop = 4 + freshnessHeight + 2
         let table = UITableView(frame: CGRect(x: 0, y: tableTop, width: bounds.width, height: availableHeight - tableTop))
         table.dataSource = self
         table.delegate = self
@@ -120,7 +116,15 @@ class PostListVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         loadFeed()
     }
 
-    @objc private func sortChanged() { loadFeed() }
+    /// The sort preference can change in Settings while this screen sits alive further down
+    /// the nav stack — viewDidAppear's one-time build guard would otherwise leave the old
+    /// sort's rows on screen until the app relaunched.
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        guard tableView != nil, let shown = displayedSort, shown != currentSort() else { return }
+        loadFeed()
+    }
+
     @objc private func retryTapped() { loadFeed(forceReload: true) }
     @objc private func pullToRefresh() { loadFeed(forceReload: true) }
 
@@ -130,22 +134,21 @@ class PostListVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
     /// screen and navigates back).
     func resetForReload() {
         tableView?.removeFromSuperview()
-        sortControl?.removeFromSuperview()
         freshnessLabel?.removeFromSuperview()
         spinner?.removeFromSuperview()
         errorLabel?.removeFromSuperview()
         tableView = nil
-        sortControl = nil
         freshnessLabel = nil
         spinner = nil
         errorLabel = nil
         refreshControl = nil
         posts = []
         postsCache.removeAll()
+        displayedSort = nil
     }
 
     private func currentSort() -> RedditAPI.Sort {
-        return PostListVC.sorts[sortControl?.selectedSegmentIndex ?? 0]
+        return sortOverride ?? AppSettings.listingSort
     }
 
     /// forceReload (pull-to-refresh / retry tap) always hits the network. Otherwise: show
@@ -160,6 +163,7 @@ class PostListVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
 
         if !forceReload, let cached = postsCache[sort] {
             posts = cached
+            displayedSort = sort
             tableView?.reloadData()
             updateFreshnessLabel(for: sort)
             return
@@ -170,16 +174,17 @@ class PostListVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
             return
         }
 
-        RedditAPI.cachedListing(subreddit: subreddit, sort: sort) { [weak self] cachedPosts in
+        RedditAPI.cachedListing(subreddit: subreddit, query: searchQuery, sort: sort) { [weak self] cachedPosts in
             guard let self = self, self.currentSort() == sort else { return }
             if !cachedPosts.isEmpty {
                 self.postsCache[sort] = cachedPosts
                 self.posts = cachedPosts
+                self.displayedSort = sort
                 self.tableView?.reloadData()
                 self.updateFreshnessLabel(for: sort)
             }
             let ttl = AppSettings.autoRefreshTTL
-            let age = RedditAPI.listingCacheDate(subreddit: self.subreddit, sort: sort)
+            let age = RedditAPI.listingCacheDate(subreddit: self.subreddit, query: self.searchQuery, sort: sort)
                 .map { Date().timeIntervalSince($0) }
             let needsRefresh = cachedPosts.isEmpty || (ttl != nil && (age ?? .greatestFiniteMagnitude) > ttl!)
             if needsRefresh {
@@ -192,7 +197,7 @@ class PostListVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         if showSpinner && refreshControl?.isRefreshing != true {
             spinner?.startAnimating()
         }
-        RedditAPI.fetchListing(subreddit: subreddit, sort: sort) { [weak self] posts, error in
+        RedditAPI.fetchListing(subreddit: subreddit, query: searchQuery, sort: sort) { [weak self] posts, error in
             guard let self = self else { return }
             // Guard against a stale/out-of-order completion: if the user has since switched
             // to a different sort tab (very possible when a request is slow or hits Reddit's
@@ -217,14 +222,28 @@ class PostListVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
             self.postsCache[sort] = posts
             if isCurrent {
                 self.posts = posts
+                self.displayedSort = sort
                 self.tableView?.reloadData()
                 self.updateFreshnessLabel(for: sort)
+                // A successful request that simply matched nothing — common for search, and
+                // an empty white table looks like a failure without saying so.
+                if posts.isEmpty {
+                    self.errorLabel?.text = self.emptyMessage()
+                    self.errorLabel?.isHidden = false
+                }
             }
         }
     }
 
+    private func emptyMessage() -> String {
+        if let query = searchQuery, !query.isEmpty {
+            return "No results for \"\(query)\""
+        }
+        return "Nothing to show here — tap to retry"
+    }
+
     private func updateFreshnessLabel(for sort: RedditAPI.Sort) {
-        guard let date = RedditAPI.listingCacheDate(subreddit: subreddit, sort: sort) else {
+        guard let date = RedditAPI.listingCacheDate(subreddit: subreddit, query: searchQuery, sort: sort) else {
             freshnessLabel?.text = nil
             return
         }
@@ -235,6 +254,12 @@ class PostListVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
     // failure, using the HTTP status CurlFetcher surfaces as the NSError code.
     private func errorMessage(for error: Error) -> String {
         let code = (error as NSError).code
+        if let query = searchQuery, !query.isEmpty {
+            switch code {
+            case 429: return "Rate limited by Reddit, try again shortly — tap to retry"
+            default: return "Couldn't search for \"\(query)\" — tap to retry"
+            }
+        }
         if let subreddit = subreddit, !subreddit.isEmpty {
             switch code {
             case 404: return "r/\(subreddit) not found — tap to try again"
