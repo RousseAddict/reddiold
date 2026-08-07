@@ -57,18 +57,9 @@ class SavedPostsVC: UIViewController, UITableViewDataSource, UITableViewDelegate
     // Same iOS6-safe measured-row-height pattern as PostListVC/PostVC — the default fixed
     // 44pt row height is too short once textLabel uses numberOfLines > 1, causing label
     // overlap between rows and separators cutting through text.
-    private func measureHeight(text: String, font: UIFont, width: CGFloat, numberOfLines: Int) -> CGFloat {
-        let label = UILabel()
-        label.font = font
-        label.numberOfLines = numberOfLines
-        label.lineBreakMode = .byWordWrapping
-        label.text = text
-        return label.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
-    }
-
     private func rowHeight(for post: Post, width: CGFloat) -> CGFloat {
         let textWidth = width - 30
-        let titleHeight = measureHeight(text: post.title, font: SavedPostsVC.titleFont, width: textWidth, numberOfLines: 2)
+        let titleHeight = TextMeasure.height(text: post.title, font: SavedPostsVC.titleFont, width: textWidth, numberOfLines: 2)
         return titleHeight + SavedPostsVC.detailFont.lineHeight + 24
     }
 

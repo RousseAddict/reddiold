@@ -274,18 +274,9 @@ class PostListVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         }
     }
 
-    private func measureHeight(text: String, font: UIFont, width: CGFloat, numberOfLines: Int) -> CGFloat {
-        let label = UILabel()
-        label.font = font
-        label.numberOfLines = numberOfLines
-        label.lineBreakMode = .byWordWrapping
-        label.text = text
-        return label.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
-    }
-
     private func rowHeight(for post: Post, width: CGFloat) -> CGFloat {
         let textWidth = post.displayableThumbnailURL != nil ? width - 30 - (PostListVC.thumbnailSize + 12) : width - 30
-        let titleHeight = measureHeight(text: post.title, font: PostListVC.titleFont, width: textWidth, numberOfLines: 2)
+        let titleHeight = TextMeasure.height(text: post.title, font: PostListVC.titleFont, width: textWidth, numberOfLines: 2)
         let minHeight = post.displayableThumbnailURL != nil ? PostListVC.thumbnailSize + 20 : 0
         return max(titleHeight + PostListVC.detailFont.lineHeight + 24, minHeight)
     }

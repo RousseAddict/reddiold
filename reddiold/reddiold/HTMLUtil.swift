@@ -1,4 +1,32 @@
-import Foundation
+import UIKit
+
+/// Text measuring for manual layout and `heightForRowAt` — the iOS 6-safe way.
+/// Everything more modern is unavailable on this project's targets:
+/// `UITableViewAutomaticDimension`/`estimatedRowHeight` are iOS 8+,
+/// `boundingRect(with:options:attributes:context:)` is iOS 7+, and NSString's old
+/// `sizeWithFont:` family is marked explicitly unavailable in Swift (a compile error, not a
+/// deprecation) even though the ObjC selector exists on iOS 6. `UILabel.sizeThatFits(_:)` has
+/// been there since iOS 2 and is what actually works on the hardware.
+/// Measure with the same font AND numberOfLines the real label uses, or rows won't match.
+struct TextMeasure {
+    static func height(text: String, font: UIFont, width: CGFloat, numberOfLines: Int) -> CGFloat {
+        let label = UILabel()
+        label.font = font
+        label.numberOfLines = numberOfLines
+        label.lineBreakMode = .byWordWrapping
+        label.text = text
+        return label.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
+    }
+
+    static func width(text: String, font: UIFont) -> CGFloat {
+        let label = UILabel()
+        label.font = font
+        label.numberOfLines = 1
+        label.text = text
+        let unbounded = CGFloat.greatestFiniteMagnitude
+        return ceil(label.sizeThatFits(CGSize(width: unbounded, height: unbounded)).width)
+    }
+}
 
 struct HTMLUtil {
     private static let entities: [String: String] = [

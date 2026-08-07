@@ -155,15 +155,6 @@ class SearchVC: UIViewController, UISearchBarDelegate, UITableViewDataSource, UI
 
     // MARK: - Results table
 
-    private func measureHeight(text: String, font: UIFont, width: CGFloat, numberOfLines: Int) -> CGFloat {
-        let label = UILabel()
-        label.font = font
-        label.numberOfLines = numberOfLines
-        label.lineBreakMode = .byWordWrapping
-        label.text = text
-        return label.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
-    }
-
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         return results.count
     }
@@ -171,9 +162,9 @@ class SearchVC: UIViewController, UISearchBarDelegate, UITableViewDataSource, UI
     func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
         let result = results[indexPath.row]
         let width = tableView.bounds.width - 30
-        var height = measureHeight(text: "r/\(result.name)", font: SearchVC.titleFont, width: width, numberOfLines: 1)
+        var height = TextMeasure.height(text: "r/\(result.name)", font: SearchVC.titleFont, width: width, numberOfLines: 1)
         if let summary = result.summary {
-            height += measureHeight(text: summary, font: SearchVC.summaryFont, width: width, numberOfLines: 2)
+            height += TextMeasure.height(text: summary, font: SearchVC.summaryFont, width: width, numberOfLines: 2)
         }
         return height + 20
     }

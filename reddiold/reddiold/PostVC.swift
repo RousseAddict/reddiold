@@ -12,6 +12,7 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
     private var tableView: UITableView?
     private var thumbnailView: UIImageView?
     private var mediaBadgeLabel: UILabel?
+    private var statsLabel: UILabel?
     private var commentsButton: UIButton?
     private var isLoadingGallery = false
     private var isLoadingVideo = false
@@ -86,6 +87,36 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         guard tableView == nil else { return }
         setupUI()
         loadThumbnail()
+        loadCachedStats()
+    }
+
+    /// Cache-only — see RedditAPI.cachedPostStats. A post the user has never opened the
+    /// comments of simply shows no numbers rather than costing a request.
+    private func loadCachedStats() {
+        guard let parts = permalinkParts() else { return }
+        RedditAPI.cachedPostStats(subreddit: parts.subreddit, postId: parts.postId) { [weak self] stats in
+            self?.apply(stats: stats)
+        }
+    }
+
+    private func apply(stats: PostStats?) {
+        guard let stats = stats, !stats.isEmpty else { return }
+        var parts: [String] = []
+        if let score = stats.score {
+            parts.append("\(score) \(score == 1 ? "point" : "points")")
+        }
+        if let count = stats.commentCount {
+            parts.append("\(count) \(count == 1 ? "comment" : "comments")")
+        }
+        statsLabel?.text = parts.joined(separator: " - ")
+    }
+
+    /// "https://old.reddit.com/r/AskReddit/comments/1vhs7gp/some_slug/" -> ("AskReddit", "1vhs7gp")
+    private func permalinkParts() -> (subreddit: String, postId: String)? {
+        let parts = post.permalink.split(separator: "/").map(String.init)
+        guard let rIdx = parts.firstIndex(of: "r"), rIdx + 1 < parts.count,
+              let cIdx = parts.firstIndex(of: "comments"), cIdx + 1 < parts.count else { return nil }
+        return (parts[rIdx + 1], parts[cIdx + 1])
     }
 
     private func setupUI() {
@@ -109,7 +140,7 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         var y: CGFloat = 8
 
         let titleFont = UIFont.boldSystemFont(ofSize: 16)
-        let titleHeight = measureHeight(text: post.title, font: titleFont, width: contentWidth, numberOfLines: 0)
+        let titleHeight = TextMeasure.height(text: post.title, font: titleFont, width: contentWidth, numberOfLines: 0)
         let titleLabel = UILabel(frame: CGRect(x: 12, y: y, width: contentWidth, height: titleHeight))
         titleLabel.numberOfLines = 0
         titleLabel.font = titleFont
@@ -120,8 +151,8 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         // The subreddit name is its own tappable label rather than part of the detail line,
         // so tapping it opens the subreddit without the author/date also being a hit target.
         let subredditText = "r/\(post.subreddit)"
-        let subredditWidth = min(measureWidth(text: subredditText, font: PostVC.authorFont), contentWidth)
-        let detailHeight = measureHeight(text: subredditText, font: PostVC.authorFont, width: contentWidth, numberOfLines: 1)
+        let subredditWidth = min(TextMeasure.width(text: subredditText, font: PostVC.authorFont), contentWidth)
+        let detailHeight = TextMeasure.height(text: subredditText, font: PostVC.authorFont, width: contentWidth, numberOfLines: 1)
         let subredditLabel = UILabel(frame: CGRect(x: 12, y: y, width: subredditWidth, height: detailHeight))
         subredditLabel.font = PostVC.authorFont
         subredditLabel.backgroundColor = UIColor.clear
@@ -143,12 +174,23 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         detailLabel.textColor = UIColor.orange
         detailLabel.backgroundColor = UIColor.clear
         detailLabel.text = detail
+        y += detailHeight + 2
+
+        // Reserved even when the numbers aren't known yet: they arrive asynchronously (from
+        // the cached permalink page, or after Show Comments), and growing the header later
+        // would mean rebuilding tableHeaderView — which throws away the loaded thumbnail and
+        // the comments button's state. An empty 14pt line costs far less than that.
+        let statsLine = UILabel(frame: CGRect(x: 12, y: y, width: contentWidth, height: detailHeight))
+        statsLine.font = PostVC.authorFont
+        statsLine.textColor = UIColor.gray
+        statsLine.backgroundColor = UIColor.clear
+        statsLabel = statsLine
         y += detailHeight + 12
 
         var linkLabel: UILabel?
         if post.mediaKind == .other, let linkURLString = post.linkURL {
             let linkFont = PostVC.authorFont
-            let linkHeight = measureHeight(text: linkURLString, font: linkFont, width: contentWidth, numberOfLines: 2)
+            let linkHeight = TextMeasure.height(text: linkURLString, font: linkFont, width: contentWidth, numberOfLines: 2)
             let label = UILabel(frame: CGRect(x: 12, y: y, width: contentWidth, height: linkHeight))
             label.numberOfLines = 2
             label.font = linkFont
@@ -188,7 +230,7 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
 
         var bodyLabel: UILabel?
         if let body = post.displayableBodyText {
-            let bodyHeight = measureHeight(text: body, font: PostVC.bodyFont, width: contentWidth, numberOfLines: 0)
+            let bodyHeight = TextMeasure.height(text: body, font: PostVC.bodyFont, width: contentWidth, numberOfLines: 0)
             let label = UILabel(frame: CGRect(x: 12, y: y, width: contentWidth, height: bodyHeight))
             label.numberOfLines = 0
             label.font = PostVC.bodyFont
@@ -214,6 +256,7 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         header.addSubview(titleLabel)
         header.addSubview(subredditLabel)
         header.addSubview(detailLabel)
+        header.addSubview(statsLine)
         if let ll = linkLabel { header.addSubview(ll) }
         if let iv = imageView { header.addSubview(iv) }
         if let badge = mediaBadge { header.addSubview(badge) }
@@ -470,15 +513,14 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
     }
 
     private func loadComments() {
-        let parts = post.permalink.split(separator: "/").map(String.init)
-        guard let rIdx = parts.firstIndex(of: "r"), rIdx + 1 < parts.count,
-              let cIdx = parts.firstIndex(of: "comments"), cIdx + 1 < parts.count else {
+        guard let parts = permalinkParts() else {
             commentsButton?.setTitle("No comments link", for: .normal)
             return
         }
 
-        RedditAPI.fetchComments(subreddit: parts[rIdx + 1], postId: parts[cIdx + 1]) { [weak self] comments, error in
+        RedditAPI.fetchComments(subreddit: parts.subreddit, postId: parts.postId) { [weak self] comments, stats, error in
             guard let self = self else { return }
+            self.apply(stats: stats)
             if let error = error, comments.isEmpty {
                 // No network (or fetch failed) — fall back to this saved post's offline
                 // comment snapshot if one was persisted from an earlier successful load.
@@ -512,24 +554,6 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         }
     }
 
-    private func measureHeight(text: String, font: UIFont, width: CGFloat, numberOfLines: Int) -> CGFloat {
-        let label = UILabel()
-        label.font = font
-        label.numberOfLines = numberOfLines
-        label.lineBreakMode = .byWordWrapping
-        label.text = text
-        return label.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
-    }
-
-    private func measureWidth(text: String, font: UIFont) -> CGFloat {
-        let label = UILabel()
-        label.font = font
-        label.numberOfLines = 1
-        label.text = text
-        let unbounded = CGFloat.greatestFiniteMagnitude
-        return ceil(label.sizeThatFits(CGSize(width: unbounded, height: unbounded)).width)
-    }
-
     private func moreStubText(for comment: Comment) -> String {
         guard comment.moreCount > 0 else { return "View more replies on reddit" }
         let noun = comment.moreCount == 1 ? "reply" : "replies"
@@ -540,12 +564,12 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         let indent = CGFloat(min(comment.depth, PostVC.maxIndentDepth)) * PostVC.indentWidth
         let textWidth = width - 30 - indent
         if comment.isMoreStub {
-            let height = measureHeight(text: moreStubText(for: comment), font: PostVC.moreStubFont,
-                                        width: textWidth, numberOfLines: 0)
+            let height = TextMeasure.height(text: moreStubText(for: comment), font: PostVC.moreStubFont,
+                                            width: textWidth, numberOfLines: 0)
             return height + 24
         }
         let body = HTMLUtil.stripTags(comment.bodyHTML)
-        let bodyHeight = measureHeight(text: body, font: PostVC.bodyFont, width: textWidth, numberOfLines: 0)
+        let bodyHeight = TextMeasure.height(text: body, font: PostVC.bodyFont, width: textWidth, numberOfLines: 0)
         return bodyHeight + PostVC.authorFont.lineHeight + 24
     }
 
@@ -619,164 +643,5 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         let comment = comments[indexPath.row]
         guard comment.isMoreStub, let url = URL(string: post.permalink) else { return }
         UIApplication.shared.openURL(url)
-    }
-}
-
-/// Full-screen image preview with pinch-to-zoom (and double-tap-to-zoom), single-tap
-/// dismiss. UIScrollView + viewForZooming(in:) is the classic, pre-iOS7-safe zoom
-/// pattern — no iOS7+ gesture APIs required.
-private class ImagePreviewVC: UIViewController, UIScrollViewDelegate {
-    private let image: UIImage
-    private var scrollView: UIScrollView?
-    private var imageView: UIImageView?
-
-    init(image: UIImage) {
-        self.image = image
-        super.init(nibName: nil, bundle: nil)
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("not supported")
-    }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        view.backgroundColor = UIColor.black
-
-        let bounds = UIScreen.main.bounds
-        let scroll = UIScrollView(frame: bounds)
-        scroll.delegate = self
-        scroll.minimumZoomScale = 1.0
-        scroll.maximumZoomScale = 4.0
-        scroll.showsHorizontalScrollIndicator = false
-        scroll.showsVerticalScrollIndicator = false
-        view.addSubview(scroll)
-        scrollView = scroll
-
-        let imgView = UIImageView(image: image)
-        imgView.frame = bounds
-        imgView.contentMode = .scaleAspectFit
-        imgView.isUserInteractionEnabled = true
-        scroll.addSubview(imgView)
-        scroll.contentSize = bounds.size
-        imageView = imgView
-
-        let doubleTap = UITapGestureRecognizer(target: self, action: #selector(doubleTapZoom))
-        doubleTap.numberOfTapsRequired = 2
-        scroll.addGestureRecognizer(doubleTap)
-
-        let singleTap = UITapGestureRecognizer(target: self, action: #selector(dismissPreview))
-        singleTap.numberOfTapsRequired = 1
-        singleTap.require(toFail: doubleTap)
-        scroll.addGestureRecognizer(singleTap)
-    }
-
-    func viewForZooming(in scrollView: UIScrollView) -> UIView? {
-        return imageView
-    }
-
-    @objc private func doubleTapZoom(_ recognizer: UITapGestureRecognizer) {
-        guard let scroll = scrollView else { return }
-        if scroll.zoomScale > scroll.minimumZoomScale {
-            scroll.setZoomScale(scroll.minimumZoomScale, animated: true)
-        } else {
-            let point = recognizer.location(in: imageView)
-            let zoomRect = CGRect(x: point.x - 50, y: point.y - 50, width: 100, height: 100)
-            scroll.zoom(to: zoomRect, animated: true)
-        }
-    }
-
-    @objc private func dismissPreview() {
-        dismiss(animated: true, completion: nil)
-    }
-}
-
-/// Full-screen horizontal-paging viewer for multi-image gallery posts. Each page is a
-/// plain scaleAspectFit UIImageView (own image fetched via CurlFetcher, cached in-memory —
-/// same NSCache pattern as PostListVC's row thumbnails); tapping a page pushes the existing
-/// pinch-zoom ImagePreviewVC for that single image. UIScrollView + isPagingEnabled is the
-/// classic pre-iOS7-safe carousel pattern (present since iOS 2) — no UICollectionView
-/// needed, and this never nests a table/collection view inside the scroll view.
-private class GalleryPagerVC: UIViewController, UIScrollViewDelegate {
-    private let imageURLs: [String]
-    private var pageControl: UIPageControl?
-    private static var imageCache = NSCache<NSString, UIImage>()
-
-    init(imageURLs: [String]) {
-        self.imageURLs = imageURLs
-        super.init(nibName: nil, bundle: nil)
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("not supported")
-    }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        view.backgroundColor = UIColor.black
-
-        let bounds = UIScreen.main.bounds
-        let scroll = UIScrollView(frame: bounds)
-        scroll.isPagingEnabled = true
-        scroll.delegate = self
-        scroll.showsHorizontalScrollIndicator = false
-        scroll.contentSize = CGSize(width: bounds.width * CGFloat(imageURLs.count), height: bounds.height)
-        view.addSubview(scroll)
-
-        for (index, urlString) in imageURLs.enumerated() {
-            let iv = UIImageView(frame: CGRect(x: bounds.width * CGFloat(index), y: 0,
-                                                width: bounds.width, height: bounds.height))
-            iv.contentMode = .scaleAspectFit
-            iv.backgroundColor = UIColor.black
-            iv.isUserInteractionEnabled = true
-            iv.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(pageTapped(_:))))
-            scroll.addSubview(iv)
-            loadImage(urlString: urlString, into: iv)
-        }
-
-        let closeButton = UIButton(type: .custom)
-        closeButton.frame = CGRect(x: 12, y: 28, width: 70, height: 32)
-        closeButton.setTitle("Close", for: .normal)
-        closeButton.setTitleColor(UIColor.white, for: .normal)
-        closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
-        view.addSubview(closeButton)
-
-        if imageURLs.count > 1 {
-            let pc = UIPageControl(frame: CGRect(x: 0, y: bounds.height - 40, width: bounds.width, height: 20))
-            pc.numberOfPages = imageURLs.count
-            pc.currentPage = 0
-            pc.isUserInteractionEnabled = false
-            view.addSubview(pc)
-            pageControl = pc
-        }
-    }
-
-    private func loadImage(urlString: String, into imageView: UIImageView) {
-        if let cached = GalleryPagerVC.imageCache.object(forKey: urlString as NSString) {
-            imageView.image = cached
-            return
-        }
-        guard let url = URL(string: urlString) else { return }
-        CurlFetcher.fetch(url: url, userAgent: RedditAPI.userAgent) { data, error in
-            guard let data = data, let image = UIImage(data: data) else { return }
-            GalleryPagerVC.imageCache.setObject(image, forKey: urlString as NSString)
-            imageView.image = image
-        }
-    }
-
-    @objc private func pageTapped(_ recognizer: UITapGestureRecognizer) {
-        guard let iv = recognizer.view as? UIImageView, let image = iv.image else { return }
-        let preview = ImagePreviewVC(image: image)
-        preview.modalPresentationStyle = .fullScreen
-        present(preview, animated: true, completion: nil)
-    }
-
-    @objc private func closeTapped() {
-        dismiss(animated: true, completion: nil)
-    }
-
-    func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        guard let pc = pageControl, scrollView.bounds.width > 0 else { return }
-        pc.currentPage = Int(round(scrollView.contentOffset.x / scrollView.bounds.width))
     }
 }

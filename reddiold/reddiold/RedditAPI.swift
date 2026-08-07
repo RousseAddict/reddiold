@@ -177,12 +177,12 @@ final class RedditAPI {
     /// below). No trailing slug segment needed — CurlFetcher follows Reddit's redirect to the
     /// canonical slugged URL (curl_bridge_set_follow_redirects, already set in CurlFetcher).
     static func fetchComments(subreddit: String, postId: String, forceRefresh: Bool = false,
-                               completion: @escaping ([Comment], Error?) -> Void) {
-        let path = "https://old.reddit.com/r/\(subreddit)/comments/\(postId)/"
+                               completion: @escaping ([Comment], PostStats?, Error?) -> Void) {
+        let path = commentsPath(subreddit: subreddit, postId: postId)
 
         guard let url = URL(string: path) else {
-            completion([], NSError(domain: "RedditAPI", code: -1,
-                                    userInfo: [NSLocalizedDescriptionKey: "Invalid URL"]))
+            completion([], nil, NSError(domain: "RedditAPI", code: -1,
+                                         userInfo: [NSLocalizedDescriptionKey: "Invalid URL"]))
             return
         }
 
@@ -190,23 +190,46 @@ final class RedditAPI {
             parseQueue.async {
                 let html = String(data: cached, encoding: .utf8) ?? ""
                 let comments = CommentHTMLParser.parseComments(fromHTML: html)
-                DispatchQueue.main.async { completion(comments, nil) }
+                let stats = PostStats(html: html)
+                DispatchQueue.main.async { completion(comments, stats, nil) }
             }
             return
         }
 
         CurlFetcher.fetch(url: url, userAgent: userAgent) { data, error in
             guard let data = data, error == nil else {
-                DispatchQueue.main.async { completion([], error) }
+                DispatchQueue.main.async { completion([], nil, error) }
                 return
             }
             FeedCache.store(data, forKey: path)
             parseQueue.async {
                 let html = String(data: data, encoding: .utf8) ?? ""
                 let comments = CommentHTMLParser.parseComments(fromHTML: html)
-                DispatchQueue.main.async { completion(comments, nil) }
+                let stats = PostStats(html: html)
+                DispatchQueue.main.async { completion(comments, stats, nil) }
             }
         }
+    }
+
+    /// Score/comment-count for a post, but **only if its permalink page is already on disk** —
+    /// never hits the network. Lets PostVC show the numbers the moment it opens for any post
+    /// whose comments have been read before, without spending a request (and a slice of the
+    /// rate limit) on every post the user merely glances at.
+    static func cachedPostStats(subreddit: String, postId: String,
+                                 completion: @escaping (PostStats?) -> Void) {
+        let path = commentsPath(subreddit: subreddit, postId: postId)
+        guard let cached = FeedCache.data(forKey: path, maxAge: commentsCacheMaxAge) else {
+            completion(nil)
+            return
+        }
+        parseQueue.async {
+            let stats = PostStats(html: String(data: cached, encoding: .utf8) ?? "")
+            DispatchQueue.main.async { completion(stats) }
+        }
+    }
+
+    private static func commentsPath(subreddit: String, postId: String) -> String {
+        return "https://old.reddit.com/r/\(subreddit)/comments/\(postId)/"
     }
 
     /// Subreddit discovery: /subreddits/search/.rss?q= (confirmed HTTP 200 unauthenticated).
@@ -268,6 +291,32 @@ struct SubredditResult {
         guard let range = link.range(of: "/r/") else { return nil }
         let rest = link[range.upperBound...]
         return String(rest.split(separator: "/").first ?? "")
+    }
+}
+
+/// A post's own score and comment count. Absent from the Atom feeds entirely, but present as
+/// plain attributes on the permalink page that fetchComments already downloads and caches:
+///   <div ... data-score="2541" data-comments-count="877" data-domain="self.AskReddit">
+/// Confirmed via curl that each appears exactly once per page — on the *link's* thing div, not
+/// on any comment (comments carry their score as `class="score unvoted" title="N"` instead,
+/// which is what CommentHTMLParser reads). So "first occurrence" is unambiguous here.
+/// Nothing extra is fetched to produce these; both are nil for a post never opened before.
+struct PostStats {
+    let score: Int?
+    let commentCount: Int?
+
+    var isEmpty: Bool { return score == nil && commentCount == nil }
+
+    init(html: String) {
+        self.score = PostStats.intAttribute("data-score", in: html)
+        self.commentCount = PostStats.intAttribute("data-comments-count", in: html)
+    }
+
+    private static func intAttribute(_ name: String, in html: String) -> Int? {
+        guard let start = html.range(of: "\(name)=\"") else { return nil }
+        let rest = html[start.upperBound...]
+        guard let end = rest.range(of: "\"") else { return nil }
+        return Int(rest[..<end.lowerBound])
     }
 }
 

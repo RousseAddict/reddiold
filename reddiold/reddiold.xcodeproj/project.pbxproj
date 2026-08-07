@@ -22,6 +22,7 @@
 		1310CC16DB9AB1E31C2E7942 /* HTMLUtil.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AE96C5F75D92CDED05050E9 /* HTMLUtil.swift */; };
 		8CCE96704A8D760DCC69DF54 /* HomeVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = E471D35F61D053A198F36500 /* HomeVC.swift */; };
 		66B62C288540676B3E3CF8FB /* PostVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53D4B79177789241F1E49822 /* PostVC.swift */; };
+		ACB2C36DBC7B6FA9519033EF /* MediaViewers.swift in Sources */ = {isa = PBXBuildFile; fileRef = D55AF3BAA3CEA56006C8BFB9 /* MediaViewers.swift */; };
 		E29DACF455DB807E5F7CE24F /* curl_bridge.c in Sources */ = {isa = PBXBuildFile; fileRef = CDDA5BDC79C685FA560A7E80 /* curl_bridge.c */; };
 		CEB7CF35301A36D24253218E /* atomic_stubs.c in Sources */ = {isa = PBXBuildFile; fileRef = 8F2C5577B2D82FCA1000162E /* atomic_stubs.c */; settings = {COMPILER_FLAGS = "-fno-builtin"; }; };
 		BCBE2D4F9F083B856FCA7731 /* atomic_stubs.S in Sources */ = {isa = PBXBuildFile; fileRef = CFD7248193AD0E28080D9F5E /* atomic_stubs.S */; };
@@ -77,6 +78,7 @@
 		4AE96C5F75D92CDED05050E9 /* HTMLUtil.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTMLUtil.swift; sourceTree = "<group>"; };
 		E471D35F61D053A198F36500 /* HomeVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeVC.swift; sourceTree = "<group>"; };
 		53D4B79177789241F1E49822 /* PostVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostVC.swift; sourceTree = "<group>"; };
+		D55AF3BAA3CEA56006C8BFB9 /* MediaViewers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaViewers.swift; sourceTree = "<group>"; };
 		CDDA5BDC79C685FA560A7E80 /* curl_bridge.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = curl_bridge.c; sourceTree = "<group>"; };
 		8F2C5577B2D82FCA1000162E /* atomic_stubs.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = atomic_stubs.c; sourceTree = "<group>"; };
 		CFD7248193AD0E28080D9F5E /* atomic_stubs.S */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.asm; path = atomic_stubs.S; sourceTree = "<group>"; };
@@ -166,6 +168,7 @@
 				92874CB0A4986D19C65C2CFC /* FavoritesVC.swift */,
 				8B3078FC79158C1226BE8ED1 /* SearchVC.swift */,
 				53D4B79177789241F1E49822 /* PostVC.swift */,
+				D55AF3BAA3CEA56006C8BFB9 /* MediaViewers.swift */,
 				395345091E78B0FF060C8C84 /* M3U8Parser.swift */,
 				6718C6E06A215F6C5ABD9021 /* RedditVideoMux.swift */,
 				0EC3108C42581D8BFA3A01B0 /* RedditVideoProxy.swift */,
@@ -346,6 +349,7 @@
 				BB9A1672E68F67E91870B4C3 /* FavoritesVC.swift in Sources */,
 				D507B27B6AF7CF34F591ACD9 /* SearchVC.swift in Sources */,
 				66B62C288540676B3E3CF8FB /* PostVC.swift in Sources */,
+				ACB2C36DBC7B6FA9519033EF /* MediaViewers.swift in Sources */,
 				3D5265127B0364D29DE8E798 /* M3U8Parser.swift in Sources */,
 				119BDDBFAA9F2B42DA0C5DEE /* RedditVideoMux.swift in Sources */,
 				0D4F94D551F0A2EFE4E00026 /* RedditVideoProxy.swift in Sources */,
