@@ -354,19 +354,20 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
     // links): all we have is the ~140px RSS preview thumbnail already on screen, so blow that up.
     private func showFullImage() {
         guard let image = thumbnailView?.image else { return }
-        let preview = ImagePreviewVC(image: image)
-        preview.modalPresentationStyle = .fullScreen
-        present(preview, animated: true, completion: nil)
+        presentViewer(ImageViewerVC(image: image))
     }
 
     // The post links straight at an image file, so show the real thing rather than the tiny
-    // RSS preview thumbnail. Reuses GalleryPagerVC with a single URL — it already does the
-    // async fetch, caching, black full-screen backdrop, Close button and tap-to-zoom, and it
-    // hides its page control when there's only one page.
+    // RSS preview thumbnail. Same viewer as a gallery, just one page — it already does the
+    // async fetch, caching, black backdrop, Close button and zoom, and hides its page control
+    // when there's only one page.
     private func openFullImage(urlString: String) {
-        let pager = GalleryPagerVC(imageURLs: [urlString])
-        pager.modalPresentationStyle = .fullScreen
-        present(pager, animated: true, completion: nil)
+        presentViewer(ImageViewerVC(imageURLs: [urlString]))
+    }
+
+    private func presentViewer(_ viewer: ImageViewerVC) {
+        viewer.modalPresentationStyle = .fullScreen
+        present(viewer, animated: true, completion: nil)
     }
 
     // openURL(_:) (not the iOS10+ open(_:options:completionHandler:)) is the oldest
@@ -397,9 +398,7 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
                 return
             }
             self.mediaBadgeLabel?.text = "Gallery - tap to view"
-            let pager = GalleryPagerVC(imageURLs: urls)
-            pager.modalPresentationStyle = .fullScreen
-            self.present(pager, animated: true, completion: nil)
+            self.presentViewer(ImageViewerVC(imageURLs: urls))
         }
     }
 

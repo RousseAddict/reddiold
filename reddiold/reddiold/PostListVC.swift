@@ -123,7 +123,11 @@ class PostListVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
     /// sort's rows on screen until the app relaunched.
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        guard tableView != nil, let shown = displayedSort, shown != currentSort() else { return }
+        guard tableView != nil, let shown = displayedSort else { return }
+        // "Updated 2m ago" is relative to now, and now moved on while this screen sat under
+        // PostVC — without this it still reads "just now" ten minutes later.
+        updateFreshnessLabel(for: shown)
+        guard shown != currentSort() else { return }
         loadFeed()
     }
 
