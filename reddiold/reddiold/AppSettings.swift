@@ -52,4 +52,36 @@ final class AppSettings {
     static var listingSort: RedditAPI.Sort {
         return listingSortOptions[listingSortIndex]
     }
+
+    // MARK: - Comment limit
+
+    private static let commentLimitIndexKey = "reddiold.commentLimitIndex"
+    private static let defaultCommentLimitIndex = 1 // "100"
+
+    /// How many comments to request per thread (`?limit=N` on the permalink page — confirmed
+    /// HTTP 200 unauthenticated). The page costs roughly 160 KB of fixed chrome plus ~4.3 KB
+    /// per comment, so an unbounded thread runs ~1 MB and can outlast the fetch timeout on a
+    /// slow connection. `nil` ("All") sends no limit and lets Reddit decide (~200 in practice).
+    /// Comments past the limit render as non-expandable "load more" stubs — `api/morechildren`
+    /// is behind the same bot wall as `.json` — so this trades completeness for reliability.
+    static let commentLimitOptions: [(title: String, value: Int?)] = [
+        ("50", 50),
+        ("100", 100),
+        ("200", 200),
+        ("All", nil)
+    ]
+
+    static var commentLimitIndex: Int {
+        get {
+            let defaults = UserDefaults.standard
+            guard defaults.object(forKey: commentLimitIndexKey) != nil else { return defaultCommentLimitIndex }
+            let index = defaults.integer(forKey: commentLimitIndexKey)
+            return (0..<commentLimitOptions.count).contains(index) ? index : defaultCommentLimitIndex
+        }
+        set { UserDefaults.standard.set(newValue, forKey: commentLimitIndexKey) }
+    }
+
+    static var commentLimit: Int? {
+        return commentLimitOptions[commentLimitIndex].value
+    }
 }

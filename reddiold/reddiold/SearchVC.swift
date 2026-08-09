@@ -50,14 +50,14 @@ class SearchVC: UIViewController, UISearchBarDelegate, UITableViewDataSource, UI
         bar.becomeFirstResponder()
 
         let scope = UISegmentedControl(items: ["Subreddits", "Posts"])
-        scope.frame = CGRect(x: 16, y: 52, width: bounds.width - 32, height: 30)
+        scope.frame = CGRect(x: Layout.margin, y: 52, width: bounds.width - (Layout.margin * 2), height: 30)
         scope.selectedSegmentIndex = 0
         scope.tintColor = UIColor.orange
         view.addSubview(scope)
         scopeControl = scope
 
         let button = UIButton(type: .custom)
-        button.frame = CGRect(x: 16, y: 90, width: bounds.width - 32, height: 44)
+        button.frame = CGRect(x: Layout.margin, y: 90, width: bounds.width - (Layout.margin * 2), height: 44)
         button.backgroundColor = UIColor.orange
         button.setTitle("Go", for: .normal)
         button.setTitleColor(UIColor.white, for: .normal)
@@ -80,7 +80,8 @@ class SearchVC: UIViewController, UISearchBarDelegate, UITableViewDataSource, UI
         view.addSubview(indicator)
         spinner = indicator
 
-        let label = UILabel(frame: CGRect(x: 20, y: tableTop + 20, width: bounds.width - 40, height: 60))
+        let label = UILabel(frame: CGRect(x: Layout.margin, y: tableTop + 20,
+                                          width: bounds.width - (Layout.margin * 2), height: 60))
         label.textAlignment = .center
         label.numberOfLines = 0
         label.font = UIFont.systemFont(ofSize: 14)

@@ -49,7 +49,8 @@ class HomeVC: PostListVC {
         band.backgroundColor = UIColor.orange
         panel.addSubview(band)
 
-        let header = UILabel(frame: CGRect(x: 18, y: 40, width: menuWidth - 36, height: 30))
+        let header = UILabel(frame: CGRect(x: Layout.margin, y: 40,
+                                           width: menuWidth - (Layout.margin * 2), height: 30))
         header.backgroundColor = .clear
         header.textColor = UIColor.white
         header.font = UIFont.boldSystemFont(ofSize: 22)
@@ -67,7 +68,9 @@ class HomeVC: PostListVC {
             let btn = UIButton(type: .custom)
             btn.frame = CGRect(x: 0, y: y, width: menuWidth, height: rowH)
             btn.contentHorizontalAlignment = .left
-            btn.contentEdgeInsets = UIEdgeInsets(top: 0, left: 24, bottom: 0, right: 0)
+            // Same inset as the panel header above, so the menu title and its rows share one
+            // left edge (the 4pt accent tab sits inside it).
+            btn.contentEdgeInsets = UIEdgeInsets(top: 0, left: Layout.margin, bottom: 0, right: 0)
             btn.setTitle(itemTitle, for: .normal)
             btn.setTitleColor(UIColor(white: 0.92, alpha: 1), for: .normal)
             btn.setTitleColor(UIColor.orange, for: .highlighted)

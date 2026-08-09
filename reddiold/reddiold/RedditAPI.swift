@@ -15,6 +15,16 @@ final class RedditAPI {
     // taps within the same sitting without needing a user-facing setting.
     private static let commentsCacheMaxAge: TimeInterval = 120 // 2 min
 
+    /// The permalink HTML page is by far the heaviest thing this app downloads — measured at
+    /// ~978 KB for an unbounded 199-comment thread, against ~30 KB for a listing feed. The
+    /// default 20s would need a sustained ~50 KB/s to finish that, which a 4S on weak WiFi
+    /// does not reliably manage; the fetch then fails and the thread looks like it won't load.
+    static let permalinkTimeout: TimeInterval = 45
+
+    /// Reddit's own ceiling for the plain HTML page — asking for more just returns the same
+    /// ~200 and re-downloads the whole thing, so "load more" stops escalating here.
+    static let maxCommentLimit = 200
+
     /// hot/rising apply only to plain listings; relevance/comments only to search results.
     /// new/top are valid for both.
     enum Sort: String {
@@ -156,7 +166,7 @@ final class RedditAPI {
             return
         }
 
-        CurlFetcher.fetch(url: url, userAgent: userAgent) { data, error in
+        CurlFetcher.fetch(url: url, userAgent: userAgent, timeout: permalinkTimeout) { data, error in
             guard let data = data, error == nil else {
                 DispatchQueue.main.async { completion([], error) }
                 return
@@ -176,9 +186,10 @@ final class RedditAPI {
     /// DOM nesting, which is what makes comment depth/score possible (see CommentHTMLParser
     /// below). No trailing slug segment needed — CurlFetcher follows Reddit's redirect to the
     /// canonical slugged URL (curl_bridge_set_follow_redirects, already set in CurlFetcher).
-    static func fetchComments(subreddit: String, postId: String, forceRefresh: Bool = false,
+    static func fetchComments(subreddit: String, postId: String, limit: Int?,
+                               forceRefresh: Bool = false,
                                completion: @escaping ([Comment], PostStats?, Error?) -> Void) {
-        let path = commentsPath(subreddit: subreddit, postId: postId)
+        let path = commentsPath(subreddit: subreddit, postId: postId, limit: limit)
 
         guard let url = URL(string: path) else {
             completion([], nil, NSError(domain: "RedditAPI", code: -1,
@@ -196,7 +207,7 @@ final class RedditAPI {
             return
         }
 
-        CurlFetcher.fetch(url: url, userAgent: userAgent) { data, error in
+        CurlFetcher.fetch(url: url, userAgent: userAgent, timeout: permalinkTimeout) { data, error in
             guard let data = data, error == nil else {
                 DispatchQueue.main.async { completion([], nil, error) }
                 return
@@ -215,9 +226,9 @@ final class RedditAPI {
     /// never hits the network. Lets PostVC show the numbers the moment it opens for any post
     /// whose comments have been read before, without spending a request (and a slice of the
     /// rate limit) on every post the user merely glances at.
-    static func cachedPostStats(subreddit: String, postId: String,
+    static func cachedPostStats(subreddit: String, postId: String, limit: Int?,
                                  completion: @escaping (PostStats?) -> Void) {
-        let path = commentsPath(subreddit: subreddit, postId: postId)
+        let path = commentsPath(subreddit: subreddit, postId: postId, limit: limit)
         guard let cached = FeedCache.data(forKey: path, maxAge: commentsCacheMaxAge) else {
             completion(nil)
             return
@@ -228,8 +239,12 @@ final class RedditAPI {
         }
     }
 
-    private static func commentsPath(subreddit: String, postId: String) -> String {
-        return "https://old.reddit.com/r/\(subreddit)/comments/\(postId)/"
+    /// Doubles as the FeedCache key, so a different limit is naturally a different cache
+    /// entry — raising the limit via "load more" can't be served the smaller cached page.
+    private static func commentsPath(subreddit: String, postId: String, limit: Int?) -> String {
+        let base = "https://old.reddit.com/r/\(subreddit)/comments/\(postId)/"
+        guard let limit = limit else { return base }
+        return base + "?limit=\(limit)"
     }
 
     /// Subreddit discovery: /subreddits/search/.rss?q= (confirmed HTTP 200 unauthenticated).

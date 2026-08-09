@@ -30,7 +30,8 @@ class EditFavoritesVC: UIViewController, UITableViewDataSource, UITableViewDeleg
             view.addSubview(table)
             tableView = table
 
-            let label = UILabel(frame: CGRect(x: 20, y: 40, width: bounds.width - 40, height: 60))
+            let label = UILabel(frame: CGRect(x: Layout.margin, y: 40,
+                                              width: bounds.width - (Layout.margin * 2), height: 60))
             label.textAlignment = .center
             label.numberOfLines = 0
             label.font = UIFont.systemFont(ofSize: 14)

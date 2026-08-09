@@ -14,6 +14,20 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
     private var mediaBadgeLabel: UILabel?
     private var statsLabel: UILabel?
     private var commentsButton: UIButton?
+    private var commentsSpinner: UIActivityIndicatorView?
+    private var thumbnailSpinner: UIActivityIndicatorView?
+    private var mediaSpinner: UIActivityIndicatorView?
+    private var loadMoreButton: UIButton?
+    private var loadMoreSpinner: UIActivityIndicatorView?
+    /// The `?limit=` the currently-displayed comments were fetched with (nil == unlimited).
+    /// "Load more" escalates this rather than paginating — Reddit's api/morechildren is behind
+    /// the same bot wall as .json, so the only way to get more is to re-request the whole page
+    /// at a higher limit.
+    private var loadedCommentLimit: Int?
+    /// The post's true comment count from the permalink page, used to decide whether the
+    /// thread we're showing is actually truncated.
+    private var totalCommentCount: Int?
+    private var isLoadingComments = false
     private var isLoadingGallery = false
     private var isLoadingVideo = false
     // The local RedditVideoProxy session URL backing the currently-presented player, if any —
@@ -94,13 +108,15 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
     /// comments of simply shows no numbers rather than costing a request.
     private func loadCachedStats() {
         guard let parts = permalinkParts() else { return }
-        RedditAPI.cachedPostStats(subreddit: parts.subreddit, postId: parts.postId) { [weak self] stats in
+        RedditAPI.cachedPostStats(subreddit: parts.subreddit, postId: parts.postId,
+                                   limit: AppSettings.commentLimit) { [weak self] stats in
             self?.apply(stats: stats)
         }
     }
 
     private func apply(stats: PostStats?) {
         guard let stats = stats, !stats.isEmpty else { return }
+        totalCommentCount = stats.commentCount
         var parts: [String] = []
         if let score = stats.score {
             parts.append("\(score) \(score == 1 ? "point" : "points")")
@@ -136,12 +152,12 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
     }
 
     private func buildHeaderView(width: CGFloat) -> UIView {
-        let contentWidth = width - 24
+        let contentWidth = width - (Layout.margin * 2)
         var y: CGFloat = 8
 
         let titleFont = UIFont.boldSystemFont(ofSize: 16)
         let titleHeight = TextMeasure.height(text: post.title, font: titleFont, width: contentWidth, numberOfLines: 0)
-        let titleLabel = UILabel(frame: CGRect(x: 12, y: y, width: contentWidth, height: titleHeight))
+        let titleLabel = UILabel(frame: CGRect(x: Layout.margin, y: y, width: contentWidth, height: titleHeight))
         titleLabel.numberOfLines = 0
         titleLabel.font = titleFont
         titleLabel.backgroundColor = UIColor.clear
@@ -153,7 +169,7 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         let subredditText = "r/\(post.subreddit)"
         let subredditWidth = min(TextMeasure.width(text: subredditText, font: PostVC.authorFont), contentWidth)
         let detailHeight = TextMeasure.height(text: subredditText, font: PostVC.authorFont, width: contentWidth, numberOfLines: 1)
-        let subredditLabel = UILabel(frame: CGRect(x: 12, y: y, width: subredditWidth, height: detailHeight))
+        let subredditLabel = UILabel(frame: CGRect(x: Layout.margin, y: y, width: subredditWidth, height: detailHeight))
         subredditLabel.font = PostVC.authorFont
         subredditLabel.backgroundColor = UIColor.clear
         subredditLabel.isUserInteractionEnabled = true
@@ -168,7 +184,7 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         if let createdAt = post.createdAt {
             detail += " - \(RelativeTime.string(from: createdAt))"
         }
-        let detailLabel = UILabel(frame: CGRect(x: 12 + subredditWidth, y: y,
+        let detailLabel = UILabel(frame: CGRect(x: Layout.margin + subredditWidth, y: y,
                                                  width: contentWidth - subredditWidth, height: detailHeight))
         detailLabel.font = PostVC.authorFont
         detailLabel.textColor = UIColor.orange
@@ -180,7 +196,7 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         // the cached permalink page, or after Show Comments), and growing the header later
         // would mean rebuilding tableHeaderView — which throws away the loaded thumbnail and
         // the comments button's state. An empty 14pt line costs far less than that.
-        let statsLine = UILabel(frame: CGRect(x: 12, y: y, width: contentWidth, height: detailHeight))
+        let statsLine = UILabel(frame: CGRect(x: Layout.margin, y: y, width: contentWidth, height: detailHeight))
         statsLine.font = PostVC.authorFont
         statsLine.textColor = UIColor.gray
         statsLine.backgroundColor = UIColor.clear
@@ -191,7 +207,7 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         if post.mediaKind == .other, let linkURLString = post.linkURL {
             let linkFont = PostVC.authorFont
             let linkHeight = TextMeasure.height(text: linkURLString, font: linkFont, width: contentWidth, numberOfLines: 2)
-            let label = UILabel(frame: CGRect(x: 12, y: y, width: contentWidth, height: linkHeight))
+            let label = UILabel(frame: CGRect(x: Layout.margin, y: y, width: contentWidth, height: linkHeight))
             label.numberOfLines = 2
             label.font = linkFont
             label.backgroundColor = UIColor.clear
@@ -208,13 +224,22 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         var imageView: UIImageView?
         var mediaBadge: UILabel?
         if post.displayableThumbnailURL != nil {
-            let iv = UIImageView(frame: CGRect(x: 12, y: y, width: contentWidth, height: 140))
+            let iv = UIImageView(frame: CGRect(x: Layout.margin, y: y, width: contentWidth, height: 140))
             iv.contentMode = .scaleAspectFit
             iv.backgroundColor = UIColor(white: 0.92, alpha: 1)
             iv.isUserInteractionEnabled = true
             iv.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(thumbnailTapped)))
             imageView = iv
             y += 140 + 12
+
+            // The thumbnail is its own fetch; until it lands the view is a flat grey box that
+            // reads as "this post has a broken image" rather than "still downloading".
+            let thumbSpinner = UIActivityIndicatorView(style: .gray)
+            thumbSpinner.center = CGPoint(x: iv.bounds.midX, y: iv.bounds.midY)
+            thumbSpinner.hidesWhenStopped = true
+            thumbSpinner.startAnimating()
+            iv.addSubview(thumbSpinner)
+            thumbnailSpinner = thumbSpinner
 
             switch post.mediaKind {
             case .gallery:
@@ -231,7 +256,7 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         var bodyLabel: UILabel?
         if let body = post.displayableBodyText {
             let bodyHeight = TextMeasure.height(text: body, font: PostVC.bodyFont, width: contentWidth, numberOfLines: 0)
-            let label = UILabel(frame: CGRect(x: 12, y: y, width: contentWidth, height: bodyHeight))
+            let label = UILabel(frame: CGRect(x: Layout.margin, y: y, width: contentWidth, height: bodyHeight))
             label.numberOfLines = 0
             label.font = PostVC.bodyFont
             label.textColor = UIColor.black
@@ -242,7 +267,7 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         }
 
         let button = UIButton(type: .custom)
-        button.frame = CGRect(x: 12, y: y, width: contentWidth, height: 44)
+        button.frame = CGRect(x: Layout.margin, y: y, width: contentWidth, height: 44)
         button.backgroundColor = UIColor.orange
         button.setTitle("Show Comments", for: .normal)
         button.setTitleColor(UIColor.white, for: .normal)
@@ -250,6 +275,15 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         button.layer.cornerRadius = 8
         button.layer.masksToBounds = true
         button.addTarget(self, action: #selector(loadCommentsTapped), for: .touchUpInside)
+
+        // Loading a thread is the slowest thing in the app (a ~600 KB HTML page, up to a 45s
+        // timeout). The button title alone changing to "Loading..." reads as frozen, so pin a
+        // spinner to its trailing edge for a visible sign of life.
+        let spinner = UIActivityIndicatorView(style: .white)
+        spinner.center = CGPoint(x: button.bounds.width - 28, y: 22)
+        spinner.hidesWhenStopped = true
+        button.addSubview(spinner)
+        commentsSpinner = spinner
         y += 44 + 12
 
         let header = UIView(frame: CGRect(x: 0, y: 0, width: width, height: y))
@@ -282,13 +316,23 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         badge.textAlignment = .center
         badge.text = text
         badge.isUserInteractionEnabled = false
+
+        // Gallery/video both need a permalink or playlist fetch before anything happens on
+        // screen; without this the badge just sits on "Loading..." looking hung.
+        let spinner = UIActivityIndicatorView(style: .white)
+        spinner.center = CGPoint(x: Layout.margin, y: badge.bounds.height / 2)
+        spinner.hidesWhenStopped = true
+        badge.addSubview(spinner)
+        mediaSpinner = spinner
         return badge
     }
 
     private func loadThumbnail() {
         guard let urlString = post.displayableThumbnailURL, let url = URL(string: urlString) else { return }
         CurlFetcher.fetch(url: url, userAgent: RedditAPI.userAgent) { [weak self] data, error in
-            guard let self = self, let data = data, let image = UIImage(data: data) else { return }
+            guard let self = self else { return }
+            self.thumbnailSpinner?.stopAnimating()
+            guard let data = data, let image = UIImage(data: data) else { return }
             self.thumbnailView?.image = image
         }
     }
@@ -343,9 +387,11 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         guard !isLoadingGallery else { return }
         isLoadingGallery = true
         mediaBadgeLabel?.text = "Loading gallery..."
+        mediaSpinner?.startAnimating()
         RedditAPI.fetchGalleryImageURLs(permalink: post.permalink) { [weak self] urls, error in
             guard let self = self else { return }
             self.isLoadingGallery = false
+            self.mediaSpinner?.stopAnimating()
             guard error == nil, !urls.isEmpty else {
                 self.mediaBadgeLabel?.text = "Gallery - couldn't load, tap to retry"
                 return
@@ -368,6 +414,7 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         guard !isLoadingVideo else { return }
         isLoadingVideo = true
         mediaBadgeLabel?.text = "Loading video..."
+        mediaSpinner?.startAnimating()
         guard let masterURL = URL(string: "https://v.redd.it/\(videoId)/HLSPlaylist.m3u8") else {
             videoLoadFailed()
             return
@@ -468,6 +515,7 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
             return
         }
         isLoadingVideo = false
+        mediaSpinner?.stopAnimating()
         mediaBadgeLabel?.text = "Play Video"
         activeVideoProxyURL = localURL
         activeMoviePlayerVC = playerVC
@@ -482,6 +530,7 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
 
     private func videoLoadFailed() {
         isLoadingVideo = false
+        mediaSpinner?.stopAnimating()
         mediaBadgeLabel?.text = "Video - couldn't load, tap to retry"
     }
 
@@ -509,17 +558,24 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
     @objc private func loadCommentsTapped() {
         commentsButton?.isEnabled = false
         commentsButton?.setTitle("Loading...", for: .normal)
-        loadComments()
+        commentsSpinner?.startAnimating()
+        loadComments(limit: AppSettings.commentLimit)
     }
 
-    private func loadComments() {
+    private func loadComments(limit: Int?) {
+        guard !isLoadingComments else { return }
         guard let parts = permalinkParts() else {
             commentsButton?.setTitle("No comments link", for: .normal)
             return
         }
+        isLoadingComments = true
 
-        RedditAPI.fetchComments(subreddit: parts.subreddit, postId: parts.postId) { [weak self] comments, stats, error in
+        RedditAPI.fetchComments(subreddit: parts.subreddit, postId: parts.postId,
+                                 limit: limit) { [weak self] comments, stats, error in
             guard let self = self else { return }
+            self.isLoadingComments = false
+            self.commentsSpinner?.stopAnimating()
+            self.loadMoreSpinner?.stopAnimating()
             self.apply(stats: stats)
             if let error = error, comments.isEmpty {
                 // No network (or fetch failed) — fall back to this saved post's offline
@@ -530,18 +586,77 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
                     self.tableView?.reloadData()
                     return
                 }
-                self.commentsButton?.isEnabled = true
-                self.commentsButton?.setTitle(self.errorMessage(for: error), for: .normal)
+                // A failed "load more" must not wipe the comments already on screen.
+                if self.comments.isEmpty {
+                    self.commentsButton?.isEnabled = true
+                    self.commentsButton?.setTitle(self.errorMessage(for: error), for: .normal)
+                } else {
+                    self.loadMoreButton?.setTitle(self.errorMessage(for: error), for: .normal)
+                    self.loadMoreButton?.isEnabled = true
+                }
                 return
             }
             self.comments = comments
+            self.loadedCommentLimit = limit
             self.commentsButton?.isHidden = true
             self.tableView?.reloadData()
+            self.updateLoadMoreFooter()
             // Keep this saved post's offline comment snapshot in sync with the latest fetch.
             if SavedPostsStore.contains(self.post.id) {
                 SavedPostsStore.saveComments(comments, forPostId: self.post.id)
             }
         }
+    }
+
+    /// The limit a "load more" tap would request next, or nil when there's nothing more to
+    /// get — either we already asked for everything, or we've hit Reddit's own page ceiling.
+    private func nextCommentLimit() -> Int? {
+        guard let current = loadedCommentLimit, current < RedditAPI.maxCommentLimit else { return nil }
+        return min(current * 2, RedditAPI.maxCommentLimit)
+    }
+
+    /// Shows the footer only when the thread is genuinely truncated: the post's own comment
+    /// count (scraped from the same page) exceeds what we actually parsed. Comparing against
+    /// real comments only — "load more" stubs are placeholders, not content.
+    private func updateLoadMoreFooter() {
+        let loaded = comments.filter { !$0.isMoreStub }.count
+        let hasMore = totalCommentCount.map { $0 > loaded } ?? false
+        guard hasMore, nextCommentLimit() != nil, let table = tableView else {
+            tableView?.tableFooterView = UIView(frame: .zero)
+            loadMoreButton = nil
+            loadMoreSpinner = nil
+            return
+        }
+
+        let footer = UIView(frame: CGRect(x: 0, y: 0, width: table.bounds.width, height: 68))
+        let button = UIButton(type: .custom)
+        button.frame = CGRect(x: Layout.margin, y: 12,
+                              width: table.bounds.width - (Layout.margin * 2), height: 44)
+        button.backgroundColor = UIColor.orange
+        button.setTitle("Load more comments", for: .normal)
+        button.setTitleColor(UIColor.white, for: .normal)
+        button.titleLabel?.font = UIFont.boldSystemFont(ofSize: 16)
+        button.layer.cornerRadius = 8
+        button.layer.masksToBounds = true
+        button.addTarget(self, action: #selector(loadMoreTapped), for: .touchUpInside)
+
+        let spinner = UIActivityIndicatorView(style: .white)
+        spinner.center = CGPoint(x: button.bounds.width - 28, y: 22)
+        spinner.hidesWhenStopped = true
+        button.addSubview(spinner)
+
+        footer.addSubview(button)
+        table.tableFooterView = footer
+        loadMoreButton = button
+        loadMoreSpinner = spinner
+    }
+
+    @objc private func loadMoreTapped() {
+        guard let next = nextCommentLimit() else { return }
+        loadMoreButton?.isEnabled = false
+        loadMoreButton?.setTitle("Loading...", for: .normal)
+        loadMoreSpinner?.startAnimating()
+        loadComments(limit: next)
     }
 
     // Same status-code messaging as PostListVC's feed error handling — the button itself

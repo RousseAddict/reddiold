@@ -75,10 +75,30 @@ class ImagePreviewVC: UIViewController, UIScrollViewDelegate {
 /// pinch-zoom ImagePreviewVC for that single image. UIScrollView + isPagingEnabled is the
 /// classic pre-iOS7-safe carousel pattern (present since iOS 2) — no UICollectionView
 /// needed, and this never nests a table/collection view inside the scroll view.
+///
+/// Memory is the binding constraint here, not bandwidth: gallery entries are the ORIGINAL
+/// uploads (measured 3840x2160 / ~6 MB JPEGs), which decode to ~33 MB of UIImage each.
+/// Loading a 6-image gallery eagerly at full resolution needs ~200 MB — jetsam territory on
+/// a 512 MB iPhone 4S, and UIImage(data:) simply starts returning nil under that pressure,
+/// which looked like "the gallery won't load". Hence: downscale to screen size on decode,
+/// keep only the visible page and its neighbours resident, and cap the cache by byte cost.
 class GalleryPagerVC: UIViewController, UIScrollViewDelegate {
     private let imageURLs: [String]
     private var pageControl: UIPageControl?
-    private static var imageCache = NSCache<NSString, UIImage>()
+    private var scrollView: UIScrollView?
+    private var imageViews: [UIImageView] = []
+    private var spinners: [UIActivityIndicatorView] = []
+    /// URLs with a fetch in flight — pages get revisited constantly as the user swipes back
+    /// and forth, and without this each revisit would start a duplicate download.
+    private var loadingURLs = Set<String>()
+    /// Pages kept in memory either side of the current one. 1 is enough to make a swipe feel
+    /// instant while capping resident images at three.
+    private static let pageWindow = 1
+    private static var imageCache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.totalCostLimit = 12 * 1024 * 1024
+        return cache
+    }()
 
     init(imageURLs: [String]) {
         self.imageURLs = imageURLs
@@ -100,8 +120,9 @@ class GalleryPagerVC: UIViewController, UIScrollViewDelegate {
         scroll.showsHorizontalScrollIndicator = false
         scroll.contentSize = CGSize(width: bounds.width * CGFloat(imageURLs.count), height: bounds.height)
         view.addSubview(scroll)
+        scrollView = scroll
 
-        for (index, urlString) in imageURLs.enumerated() {
+        for index in 0..<imageURLs.count {
             let iv = UIImageView(frame: CGRect(x: bounds.width * CGFloat(index), y: 0,
                                                 width: bounds.width, height: bounds.height))
             iv.contentMode = .scaleAspectFit
@@ -109,11 +130,20 @@ class GalleryPagerVC: UIViewController, UIScrollViewDelegate {
             iv.isUserInteractionEnabled = true
             iv.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(pageTapped(_:))))
             scroll.addSubview(iv)
-            loadImage(urlString: urlString, into: iv)
+            imageViews.append(iv)
+
+            // Full-res gallery entries are multi-MB; without this a page is just black while
+            // it downloads and looks broken rather than busy.
+            let spinner = UIActivityIndicatorView(style: .white)
+            spinner.center = CGPoint(x: iv.frame.midX, y: iv.frame.midY)
+            spinner.hidesWhenStopped = true
+            scroll.addSubview(spinner)
+            spinners.append(spinner)
         }
+        updateResidentPages()
 
         let closeButton = UIButton(type: .custom)
-        closeButton.frame = CGRect(x: 12, y: 28, width: 70, height: 32)
+        closeButton.frame = CGRect(x: Layout.margin, y: 28, width: 70, height: 32)
         closeButton.setTitle("Close", for: .normal)
         closeButton.setTitleColor(UIColor.white, for: .normal)
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
@@ -129,17 +159,75 @@ class GalleryPagerVC: UIViewController, UIScrollViewDelegate {
         }
     }
 
-    private func loadImage(urlString: String, into imageView: UIImageView) {
+    /// Loads the pages within `pageWindow` of the current one and releases the rest. Dropping
+    /// `image` is what actually frees the pixels; the cache may still hold them, but under its
+    /// own byte budget rather than one-per-page unbounded.
+    private func updateResidentPages() {
+        guard let scroll = scrollView, scroll.bounds.width > 0 else { return }
+        let current = Int(round(scroll.contentOffset.x / scroll.bounds.width))
+        for index in 0..<imageViews.count {
+            if abs(index - current) <= GalleryPagerVC.pageWindow {
+                loadImage(at: index)
+            } else {
+                imageViews[index].image = nil
+                spinners[index].stopAnimating()
+            }
+        }
+    }
+
+    private func loadImage(at index: Int) {
+        let urlString = imageURLs[index]
+        let imageView = imageViews[index]
+        let spinner = spinners[index]
         if let cached = GalleryPagerVC.imageCache.object(forKey: urlString as NSString) {
             imageView.image = cached
+            spinner.stopAnimating()
             return
         }
-        guard let url = URL(string: urlString) else { return }
-        CurlFetcher.fetch(url: url, userAgent: RedditAPI.userAgent) { data, error in
-            guard let data = data, let image = UIImage(data: data) else { return }
-            GalleryPagerVC.imageCache.setObject(image, forKey: urlString as NSString)
+        guard imageView.image == nil, !loadingURLs.contains(urlString),
+              let url = URL(string: urlString) else { return }
+        loadingURLs.insert(urlString)
+        spinner.startAnimating()
+        CurlFetcher.fetch(url: url, userAgent: RedditAPI.userAgent) { [weak self] data, error in
+            guard let self = self else { return }
+            self.loadingURLs.remove(urlString)
+            spinner.stopAnimating()
+            guard let data = data, let full = UIImage(data: data) else { return }
+            let image = self.downscaled(full, toFit: UIScreen.main.bounds.size)
+            GalleryPagerVC.imageCache.setObject(image, forKey: urlString as NSString,
+                                                cost: GalleryPagerVC.byteCost(of: image))
+            // The page may have scrolled out of the resident window while this was in flight;
+            // assigning then would put back exactly the pixels updateResidentPages just freed.
+            guard self.isResident(index: index) else { return }
             imageView.image = image
         }
+    }
+
+    private func isResident(index: Int) -> Bool {
+        guard let scroll = scrollView, scroll.bounds.width > 0 else { return true }
+        let current = Int(round(scroll.contentOffset.x / scroll.bounds.width))
+        return abs(index - current) <= GalleryPagerVC.pageWindow
+    }
+
+    /// Aspect-fit downscale to screen size. A 3840x2160 original costs ~33 MB decoded; at
+    /// screen size it's ~1 MB, and the page is a scaleAspectFit view so nothing is lost
+    /// visually. Same UIGraphicsBeginImageContextWithOptions approach as PostListVC's row
+    /// thumbnails (safe since iOS 4).
+    private func downscaled(_ image: UIImage, toFit size: CGSize) -> UIImage {
+        guard image.size.width > 0, image.size.height > 0 else { return image }
+        let ratio = min(size.width / image.size.width, size.height / image.size.height)
+        guard ratio < 1 else { return image }
+        let target = CGSize(width: floor(image.size.width * ratio), height: floor(image.size.height * ratio))
+        UIGraphicsBeginImageContextWithOptions(target, false, 0)
+        image.draw(in: CGRect(origin: .zero, size: target))
+        let result = UIGraphicsGetImageFromCurrentImageContext() ?? image
+        UIGraphicsEndImageContext()
+        return result
+    }
+
+    private static func byteCost(of image: UIImage) -> Int {
+        let pixels = image.size.width * image.scale * image.size.height * image.scale
+        return Int(pixels) * 4
     }
 
     @objc private func pageTapped(_ recognizer: UITapGestureRecognizer) {
@@ -154,7 +242,8 @@ class GalleryPagerVC: UIViewController, UIScrollViewDelegate {
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        guard let pc = pageControl, scrollView.bounds.width > 0 else { return }
-        pc.currentPage = Int(round(scrollView.contentOffset.x / scrollView.bounds.width))
+        guard scrollView.bounds.width > 0 else { return }
+        pageControl?.currentPage = Int(round(scrollView.contentOffset.x / scrollView.bounds.width))
+        updateResidentPages()
     }
 }

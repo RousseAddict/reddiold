@@ -72,7 +72,8 @@ class PostListVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         let bounds = view.bounds
 
         let freshnessHeight: CGFloat = 16
-        let freshness = UILabel(frame: CGRect(x: 8, y: 4, width: bounds.width - 16, height: freshnessHeight))
+        let freshness = UILabel(frame: CGRect(x: Layout.margin, y: 4,
+                                              width: bounds.width - (Layout.margin * 2), height: freshnessHeight))
         freshness.font = UIFont.systemFont(ofSize: 11)
         freshness.textColor = UIColor.gray
         freshness.textAlignment = .center
@@ -102,7 +103,8 @@ class PostListVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         view.addSubview(indicator)
         spinner = indicator
 
-        let label = UILabel(frame: CGRect(x: 20, y: tableTop + 40, width: bounds.width - 40, height: 40))
+        let label = UILabel(frame: CGRect(x: Layout.margin, y: tableTop + 40,
+                                          width: bounds.width - (Layout.margin * 2), height: 40))
         label.textAlignment = .center
         label.numberOfLines = 0
         label.font = UIFont.systemFont(ofSize: 14)

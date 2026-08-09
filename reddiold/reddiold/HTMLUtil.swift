@@ -28,6 +28,14 @@ struct TextMeasure {
     }
 }
 
+/// Shared layout metrics. Screens were hand-laid-out one at a time with whatever inset
+/// looked right (8, 12, 16, 18, 20 and 24 were all in use), which reads as sloppy when you
+/// navigate between them. One constant so they can't drift apart again; 16 was already the
+/// most common and lines up closely with UITableViewCell's own ~15pt text inset.
+struct Layout {
+    static let margin: CGFloat = 16
+}
+
 struct HTMLUtil {
     private static let entities: [String: String] = [
         "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": "\"",
