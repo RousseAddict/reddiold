@@ -10,10 +10,13 @@ final class RedditAPI {
 
     /// Was `old.reddit.com` until 2026-08-11, when Reddit put that host entirely behind a
     /// logged-out redirect: *every* path (front page, subreddit, search, comment permalink)
-    /// answers `302 → /login/?reason=lor2` with an empty body, and no cookie avoids it.
-    /// Because CurlFetcher doesn't follow redirects, that read as a successful 0-byte
-    /// response — 0 Atom entries — so every screen showed the empty state rather than an
-    /// error. `www.reddit.com` still serves the same feeds unauthenticated, and its listing
+    /// answers `302 → /login/?reason=lor2`, and no cookie avoids it. CurlFetcher follows
+    /// redirects, so the transfer succeeded with HTTP 200 and ~315 KB of *login page HTML*.
+    /// That passes every check the fetch layer had — non-nil data, status 200 — and only
+    /// falls over in the Atom parser, which finds 0 entries. So every screen showed the
+    /// ordinary empty state rather than an error, and the login page got written to
+    /// FeedCache. See `looksLikeAtomFeed` for the guard added in response.
+    /// `www.reddit.com` still serves the same feeds unauthenticated, and its listing
     /// and search Atom is structurally identical (`t3_` ids, media:thumbnail, category term,
     /// the same [link]/[comments] anchors), so this host is a drop-in for all of them.
     ///
@@ -55,6 +58,56 @@ final class RedditAPI {
             case .comments: return "Comments"
             }
         }
+    }
+
+    /// NSError code for "the transfer succeeded but the body isn't a feed" — see
+    /// `looksLikeAtomFeed`. Negative so it can't collide with an HTTP status, which is what
+    /// CurlFetcher puts in the code for a non-200 response.
+    static let notAFeedErrorCode = -2
+
+    /// True if the payload's opening bytes contain an Atom `<feed` root element.
+    ///
+    /// Exists because a 200 response is not evidence of a feed. When Reddit walled
+    /// old.reddit.com it served a login page — HTTP 200, 315 KB — for every feed URL; the
+    /// fetch layer saw success, the parser found 0 entries, and the app showed "Nothing to
+    /// show here" on every screen. An outage was indistinguishable from an empty subreddit,
+    /// and the login page was cached to disk as if it were content.
+    ///
+    /// Deliberately a marker check on the payload rather than an inspection of the redirect
+    /// chain: it needs no new curl bridge API, and it catches any non-feed body (block page,
+    /// error page, captcha), not just a login redirect. A genuinely empty feed still has the
+    /// `<feed>` root, so it stays a legitimate empty state rather than becoming an error.
+    ///
+    /// Hand-rolled byte scan — the project uses no NSRegularExpression, and decoding a
+    /// truncated prefix as UTF-8 can fail on a multi-byte boundary. 2 KB is far more than the
+    /// ~100 bytes Reddit needs for `<?xml …?><feed xmlns=…>`.
+    private static func looksLikeAtomFeed(_ data: Data) -> Bool {
+        let marker = Array("<feed".utf8)
+        let bytes = [UInt8](data.prefix(2048))
+        guard bytes.count >= marker.count else { return false }
+        for start in 0...(bytes.count - marker.count) {
+            var matched = true
+            for offset in 0..<marker.count {
+                if bytes[start + offset] != marker[offset] {
+                    matched = false
+                    break
+                }
+            }
+            if matched { return true }
+        }
+        return false
+    }
+
+    /// Validates a fetched Atom payload and caches it only if it really is one. Returns nil
+    /// when the body isn't a feed, so callers report a real error instead of an empty list —
+    /// and so a block/login page never displaces good cached content on disk.
+    private static func validatedFeed(_ data: Data, cacheKey: String) -> Error? {
+        guard looksLikeAtomFeed(data) else {
+            return NSError(domain: "RedditAPI", code: notAFeedErrorCode,
+                            userInfo: [NSLocalizedDescriptionKey: "Response was not a feed"])
+        }
+        FeedCache.store(data, forKey: cacheKey)
+        return nil
     }
 
     /// Percent-encodes a search term for use in a query string. Hand-rolled because
@@ -145,7 +198,10 @@ final class RedditAPI {
                 DispatchQueue.main.async { completion([], error) }
                 return
             }
-            FeedCache.store(data, forKey: path)
+            if let invalid = validatedFeed(data, cacheKey: path) {
+                DispatchQueue.main.async { completion([], invalid) }
+                return
+            }
             parseQueue.async {
                 let entries = AtomFeedParser.parseEntries(data: data)
                 let posts = entries.compactMap { Post(entry: $0) }
@@ -301,7 +357,10 @@ final class RedditAPI {
                 DispatchQueue.main.async { completion([], error) }
                 return
             }
-            FeedCache.store(data, forKey: path)
+            if let invalid = validatedFeed(data, cacheKey: path) {
+                DispatchQueue.main.async { completion([], invalid) }
+                return
+            }
             parseQueue.async {
                 let results = AtomFeedParser.parseEntries(data: data).compactMap { SubredditResult(entry: $0) }
                 DispatchQueue.main.async { completion(results, nil) }

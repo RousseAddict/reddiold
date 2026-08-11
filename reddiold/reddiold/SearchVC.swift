@@ -158,6 +158,7 @@ class SearchVC: UIViewController, UISearchBarDelegate, UITableViewDataSource, UI
     private func errorMessage(for error: Error) -> String {
         let code = (error as NSError).code
         switch code {
+        case RedditAPI.notAFeedErrorCode: return "Reddit isn't returning feeds - it may now require a login."
         case 429: return "Rate limited by Reddit, try again shortly."
         default: return "Couldn't search."
         }

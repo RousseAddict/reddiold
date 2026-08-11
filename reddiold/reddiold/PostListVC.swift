@@ -283,6 +283,12 @@ class PostListVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
     // failure, using the HTTP status CurlFetcher surfaces as the NSError code.
     private func errorMessage(for error: Error) -> String {
         let code = (error as NSError).code
+        // Handled before the per-screen branches because it isn't about this subreddit or
+        // this query: Reddit answered with something that isn't a feed, so every screen is
+        // equally affected and neither retrying nor picking another subreddit will help.
+        if code == RedditAPI.notAFeedErrorCode {
+            return "Reddit isn't returning feeds - it may now require a login."
+        }
         if let query = searchQuery, !query.isEmpty {
             switch code {
             case 429: return "Rate limited by Reddit, try again shortly."
