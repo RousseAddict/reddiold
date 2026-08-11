@@ -44,7 +44,9 @@ class FavoritesVC: PostListVC {
                 label.numberOfLines = 0
                 label.textAlignment = .center
                 label.font = UIFont.systemFont(ofSize: 15)
-                label.textColor = UIColor.gray
+                label.textColor = Theme.secondaryText
+                // UILabel.backgroundColor defaults to WHITE on iOS 6, not clear.
+                label.backgroundColor = UIColor.clear
                 label.text = "No favorites yet. Visit a subreddit and tap Favorite, then come back here to see their combined New feed."
                 view.addSubview(label)
                 emptyLabel = label

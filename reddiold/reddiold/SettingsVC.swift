@@ -26,7 +26,7 @@ class SettingsVC: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = "Settings"
-        view.backgroundColor = UIColor.white
+        view.backgroundColor = Theme.pageBackground
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -36,30 +36,26 @@ class SettingsVC: UIViewController {
         let contentWidth = bounds.width - (Layout.margin * 2)
 
         let scroll = UIScrollView(frame: bounds)
+        scroll.backgroundColor = Theme.pageBackground
         view.addSubview(scroll)
         scrollView = scroll
 
         var y = Layout.margin
 
-        let button = UIButton(type: .custom)
-        button.frame = CGRect(x: Layout.margin, y: y, width: contentWidth, height: 44)
-        button.backgroundColor = UIColor.orange
-        button.setTitle("Clear Cache", for: .normal)
-        button.setTitleColor(UIColor.white, for: .normal)
-        button.titleLabel?.font = UIFont.boldSystemFont(ofSize: 16)
-        button.layer.cornerRadius = 8
-        button.layer.masksToBounds = true
-        button.addTarget(self, action: #selector(clearCacheTapped), for: .touchUpInside)
+        let button = Theme.actionButton(title: "Clear Cache",
+                                        frame: CGRect(x: Layout.margin, y: y,
+                                                      width: contentWidth, height: Layout.buttonHeight),
+                                        target: self, action: #selector(clearCacheTapped))
         scroll.addSubview(button)
-        y += 44 + SettingsVC.labelGap
+        y += Layout.buttonHeight + SettingsVC.labelGap
 
-        let size = makeCaption(width: contentWidth, y: y, color: UIColor.gray)
+        let size = makeCaption(width: contentWidth, y: y, color: Theme.secondaryText)
         scroll.addSubview(size)
         sizeLabel = size
         refreshCacheSizeLabel()
         y += size.frame.height + SettingsVC.hintGap
 
-        let status = makeCaption(width: contentWidth, y: y, color: UIColor.gray)
+        let status = makeCaption(width: contentWidth, y: y, color: Theme.secondaryText)
         status.isHidden = true
         scroll.addSubview(status)
         statusLabel = status
@@ -101,7 +97,7 @@ class SettingsVC: UIViewController {
                             store: (UISegmentedControl) -> Void) -> CGFloat {
         var y = y
 
-        let titleLabel = makeCaption(width: width, y: y, color: UIColor.darkGray)
+        let titleLabel = makeCaption(width: width, y: y, color: Theme.headingText)
         titleLabel.text = title
         titleLabel.textAlignment = .left
         scroll.addSubview(titleLabel)
@@ -109,7 +105,7 @@ class SettingsVC: UIViewController {
 
         let control = UISegmentedControl(items: items)
         control.frame = CGRect(x: Layout.margin, y: y, width: width, height: 30)
-        control.tintColor = UIColor.orange
+        control.tintColor = Theme.accent
         control.selectedSegmentIndex = selected
         control.addTarget(self, action: action, for: .valueChanged)
         scroll.addSubview(control)
@@ -121,7 +117,7 @@ class SettingsVC: UIViewController {
         let hintLabel = UILabel(frame: CGRect(x: Layout.margin, y: y, width: width, height: hintHeight))
         hintLabel.numberOfLines = 0
         hintLabel.font = hintFont
-        hintLabel.textColor = UIColor.gray
+        hintLabel.textColor = Theme.secondaryText
         hintLabel.backgroundColor = UIColor.clear
         hintLabel.text = hint
         scroll.addSubview(hintLabel)

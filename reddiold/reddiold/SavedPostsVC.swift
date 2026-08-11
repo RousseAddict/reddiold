@@ -17,7 +17,7 @@ class SavedPostsVC: UIViewController, UITableViewDataSource, UITableViewDelegate
     override func viewDidLoad() {
         super.viewDidLoad()
         title = "Saved Posts"
-        view.backgroundColor = UIColor.white
+        view.backgroundColor = Theme.pageBackground
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -32,6 +32,7 @@ class SavedPostsVC: UIViewController, UITableViewDataSource, UITableViewDelegate
             table.dataSource = self
             table.delegate = self
             table.tableFooterView = UIView(frame: .zero)
+            Theme.apply(to: table)
             view.addSubview(table)
             tableView = table
 
@@ -40,7 +41,10 @@ class SavedPostsVC: UIViewController, UITableViewDataSource, UITableViewDelegate
             label.textAlignment = .center
             label.numberOfLines = 0
             label.font = UIFont.systemFont(ofSize: 14)
-            label.textColor = UIColor.gray
+            label.textColor = Theme.secondaryText
+            // UILabel.backgroundColor defaults to WHITE on iOS 6, not clear — without this the
+            // empty state is a white block over the page background.
+            label.backgroundColor = UIColor.clear
             label.text = "No saved posts yet - open a post and tap Save to view it here offline."
             view.addSubview(label)
             emptyLabel = label
@@ -59,7 +63,7 @@ class SavedPostsVC: UIViewController, UITableViewDataSource, UITableViewDelegate
     // 44pt row height is too short once textLabel uses numberOfLines > 1, causing label
     // overlap between rows and separators cutting through text.
     private func rowHeight(for post: Post, width: CGFloat) -> CGFloat {
-        let textWidth = width - 30
+        let textWidth = width - Layout.cellTextInset
         let titleHeight = TextMeasure.height(text: post.title, font: SavedPostsVC.titleFont, width: textWidth, numberOfLines: 2)
         return titleHeight + SavedPostsVC.detailFont.lineHeight + 24
     }
@@ -71,8 +75,10 @@ class SavedPostsVC: UIViewController, UITableViewDataSource, UITableViewDelegate
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: cellId) ?? UITableViewCell(style: .subtitle, reuseIdentifier: cellId)
         let post = posts[indexPath.row]
+        cell.backgroundColor = Theme.cellBackground
         cell.textLabel?.text = post.title
         cell.textLabel?.font = SavedPostsVC.titleFont
+        cell.textLabel?.textColor = Theme.primaryText
         cell.textLabel?.numberOfLines = 2
 
         var detail = "r/\(post.subreddit) - \(post.author)"
@@ -81,7 +87,7 @@ class SavedPostsVC: UIViewController, UITableViewDataSource, UITableViewDelegate
         }
         cell.detailTextLabel?.text = detail
         cell.detailTextLabel?.font = SavedPostsVC.detailFont
-        cell.detailTextLabel?.textColor = UIColor.orange
+        cell.detailTextLabel?.textColor = Theme.accent
         cell.selectionStyle = .default
         return cell
     }

@@ -20,6 +20,7 @@ class PostListVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
     private var freshnessLabel: UILabel?
     private var spinner: UIActivityIndicatorView?
     private var errorLabel: UILabel?
+    private var retryButton: UIButton?
     private var posts: [Post] = []
     private var postsCache: [RedditAPI.Sort: [Post]] = [:]
     /// Which sort the rows on screen belong to — so viewWillAppear can notice the user
@@ -47,7 +48,7 @@ class PostListVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = UIColor.white
+        view.backgroundColor = Theme.pageBackground
         NotificationCenter.default.addObserver(self, selector: #selector(handleCacheCleared), name: PostListVC.cacheDidClearNotification, object: nil)
     }
 
@@ -75,7 +76,7 @@ class PostListVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         let freshness = UILabel(frame: CGRect(x: Layout.margin, y: 4,
                                               width: bounds.width - (Layout.margin * 2), height: freshnessHeight))
         freshness.font = UIFont.systemFont(ofSize: 11)
-        freshness.textColor = UIColor.gray
+        freshness.textColor = Theme.secondaryText
         freshness.textAlignment = .center
         freshness.backgroundColor = UIColor.clear
         view.addSubview(freshness)
@@ -87,6 +88,7 @@ class PostListVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         table.dataSource = self
         table.delegate = self
         table.tableFooterView = UIView(frame: .zero)
+        Theme.apply(to: table)
         view.addSubview(table)
         tableView = table
 
@@ -98,7 +100,7 @@ class PostListVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         table.addSubview(refresh)
         refreshControl = refresh
 
-        let indicator = UIActivityIndicatorView(style: .gray)
+        let indicator = UIActivityIndicatorView(style: Theme.spinnerStyle)
         indicator.center = CGPoint(x: bounds.width / 2, y: tableTop + 60)
         view.addSubview(indicator)
         spinner = indicator
@@ -108,12 +110,22 @@ class PostListVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         label.textAlignment = .center
         label.numberOfLines = 0
         label.font = UIFont.systemFont(ofSize: 14)
-        label.textColor = UIColor.gray
+        label.textColor = Theme.secondaryText
+        label.backgroundColor = UIColor.clear
         label.isHidden = true
-        label.isUserInteractionEnabled = true
-        label.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(retryTapped)))
         view.addSubview(label)
         errorLabel = label
+
+        // A real button rather than a tap recognizer on the message label — a gray centered
+        // sentence reads as a status line, not a control, so the retry was easy to miss.
+        let retry = Theme.actionButton(title: "Retry",
+                                       frame: CGRect(x: Layout.margin, y: tableTop + 88,
+                                                     width: bounds.width - (Layout.margin * 2),
+                                                     height: Layout.buttonHeight),
+                                       target: self, action: #selector(retryTapped))
+        retry.isHidden = true
+        view.addSubview(retry)
+        retryButton = retry
 
         loadFeed()
     }
@@ -134,6 +146,17 @@ class PostListVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
     @objc private func retryTapped() { loadFeed(forceReload: true) }
     @objc private func pullToRefresh() { loadFeed(forceReload: true) }
 
+    private func showError(_ text: String) {
+        errorLabel?.text = text
+        errorLabel?.isHidden = false
+        retryButton?.isHidden = false
+    }
+
+    private func hideError() {
+        errorLabel?.isHidden = true
+        retryButton?.isHidden = true
+    }
+
     /// Tears down all built subviews and cached state so the next viewDidAppear performs a
     /// full rebuild — for subclasses (FavoritesVC) whose effective `subreddit` can change
     /// between appearances (e.g. after the user edits their favorites list on a separate
@@ -143,10 +166,12 @@ class PostListVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         freshnessLabel?.removeFromSuperview()
         spinner?.removeFromSuperview()
         errorLabel?.removeFromSuperview()
+        retryButton?.removeFromSuperview()
         tableView = nil
         freshnessLabel = nil
         spinner = nil
         errorLabel = nil
+        retryButton = nil
         refreshControl = nil
         posts = []
         postsCache.removeAll()
@@ -165,7 +190,7 @@ class PostListVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
     /// pull-to-refresh the only way to get new content).
     private func loadFeed(forceReload: Bool = false) {
         let sort = currentSort()
-        errorLabel?.isHidden = true
+        hideError()
 
         if !forceReload, let cached = postsCache[sort] {
             posts = cached
@@ -220,8 +245,7 @@ class PostListVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
                 // background refresh (e.g. rate-limited) shouldn't wipe already-displayed,
                 // still-useful stale content.
                 if isCurrent && self.posts.isEmpty {
-                    self.errorLabel?.text = self.errorMessage(for: error)
-                    self.errorLabel?.isHidden = false
+                    self.showError(self.errorMessage(for: error))
                 }
                 return
             }
@@ -234,8 +258,7 @@ class PostListVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
                 // A successful request that simply matched nothing — common for search, and
                 // an empty white table looks like a failure without saying so.
                 if posts.isEmpty {
-                    self.errorLabel?.text = self.emptyMessage()
-                    self.errorLabel?.isHidden = false
+                    self.showError(self.emptyMessage())
                 }
             }
         }
@@ -245,7 +268,7 @@ class PostListVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         if let query = searchQuery, !query.isEmpty {
             return "No results for \"\(query)\""
         }
-        return "Nothing to show here — tap to retry"
+        return "Nothing to show here"
     }
 
     private func updateFreshnessLabel(for sort: RedditAPI.Sort) {
@@ -262,26 +285,27 @@ class PostListVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         let code = (error as NSError).code
         if let query = searchQuery, !query.isEmpty {
             switch code {
-            case 429: return "Rate limited by Reddit, try again shortly — tap to retry"
-            default: return "Couldn't search for \"\(query)\" — tap to retry"
+            case 429: return "Rate limited by Reddit, try again shortly."
+            default: return "Couldn't search for \"\(query)\"."
             }
         }
         if let subreddit = subreddit, !subreddit.isEmpty {
             switch code {
-            case 404: return "r/\(subreddit) not found — tap to try again"
-            case 403: return "r/\(subreddit) is private or restricted — tap to try again"
-            case 429: return "Rate limited by Reddit, try again shortly — tap to retry"
-            default: return "Couldn't load r/\(subreddit) — tap to retry"
+            case 404: return "r/\(subreddit) not found."
+            case 403: return "r/\(subreddit) is private or restricted."
+            case 429: return "Rate limited by Reddit, try again shortly."
+            default: return "Couldn't load r/\(subreddit)."
             }
         }
         switch code {
-        case 429: return "Rate limited by Reddit, try again shortly — tap to retry"
-        default: return "Couldn't load — tap to retry"
+        case 429: return "Rate limited by Reddit, try again shortly."
+        default: return "Couldn't load."
         }
     }
 
     private func rowHeight(for post: Post, width: CGFloat) -> CGFloat {
-        let textWidth = post.displayableThumbnailURL != nil ? width - 30 - (PostListVC.thumbnailSize + 12) : width - 30
+        let available = width - Layout.cellTextInset
+        let textWidth = post.displayableThumbnailURL != nil ? available - (PostListVC.thumbnailSize + 12) : available
         let titleHeight = TextMeasure.height(text: post.title, font: PostListVC.titleFont, width: textWidth, numberOfLines: 2)
         let minHeight = post.displayableThumbnailURL != nil ? PostListVC.thumbnailSize + 20 : 0
         return max(titleHeight + PostListVC.detailFont.lineHeight + 24, minHeight)
@@ -344,8 +368,10 @@ class PostListVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: cellId) ?? UITableViewCell(style: .subtitle, reuseIdentifier: cellId)
         let post = posts[indexPath.row]
+        cell.backgroundColor = Theme.cellBackground
         cell.textLabel?.text = post.title
         cell.textLabel?.font = PostListVC.titleFont
+        cell.textLabel?.textColor = Theme.primaryText
         cell.textLabel?.numberOfLines = 2
 
         var detail = "r/\(post.subreddit) - \(post.author)"
@@ -354,7 +380,7 @@ class PostListVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         }
         cell.detailTextLabel?.text = detail
         cell.detailTextLabel?.font = PostListVC.detailFont
-        cell.detailTextLabel?.textColor = UIColor.orange
+        cell.detailTextLabel?.textColor = Theme.accent
 
         if post.displayableThumbnailURL != nil {
             let key = post.displayableThumbnailURL! as NSString

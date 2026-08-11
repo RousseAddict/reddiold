@@ -71,7 +71,7 @@ class ImageViewerVC: UIViewController, UIScrollViewDelegate {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = UIColor.black
+        view.backgroundColor = Theme.viewerBackground
 
         let bounds = UIScreen.main.bounds
         let paging = UIScrollView(frame: bounds)
@@ -95,7 +95,7 @@ class ImageViewerVC: UIViewController, UIScrollViewDelegate {
 
             let iv = UIImageView(frame: page.bounds)
             iv.contentMode = .scaleAspectFit
-            iv.backgroundColor = UIColor.black
+            iv.backgroundColor = Theme.viewerBackground
             iv.image = localImage
             page.addSubview(iv)
             imageViews.append(iv)
@@ -106,7 +106,7 @@ class ImageViewerVC: UIViewController, UIScrollViewDelegate {
 
             // Full-res gallery entries are multi-MB; without this a page is just black while
             // it downloads and looks broken rather than busy.
-            let spinner = UIActivityIndicatorView(style: .white)
+            let spinner = UIActivityIndicatorView(style: Theme.contrastSpinnerStyle)
             spinner.center = CGPoint(x: page.bounds.midX, y: page.bounds.midY)
             spinner.hidesWhenStopped = true
             page.addSubview(spinner)
@@ -141,7 +141,7 @@ class ImageViewerVC: UIViewController, UIScrollViewDelegate {
     private func makeIconButton(named: String, action: Selector) -> UIButton {
         let button = UIButton(type: .custom)
         button.setImage(UIImage(named: named), for: .normal)
-        button.backgroundColor = UIColor(white: 0, alpha: 0.45)
+        button.backgroundColor = Theme.overlayButtonBackground
         button.layer.cornerRadius = 22
         button.layer.masksToBounds = true
         button.addTarget(self, action: action, for: .touchUpInside)

@@ -12,7 +12,7 @@ class EditFavoritesVC: UIViewController, UITableViewDataSource, UITableViewDeleg
     override func viewDidLoad() {
         super.viewDidLoad()
         title = "Edit Favorites"
-        view.backgroundColor = UIColor.white
+        view.backgroundColor = Theme.pageBackground
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -27,6 +27,7 @@ class EditFavoritesVC: UIViewController, UITableViewDataSource, UITableViewDeleg
             table.dataSource = self
             table.delegate = self
             table.tableFooterView = UIView(frame: .zero)
+            Theme.apply(to: table)
             view.addSubview(table)
             tableView = table
 
@@ -35,7 +36,9 @@ class EditFavoritesVC: UIViewController, UITableViewDataSource, UITableViewDeleg
             label.textAlignment = .center
             label.numberOfLines = 0
             label.font = UIFont.systemFont(ofSize: 14)
-            label.textColor = UIColor.gray
+            label.textColor = Theme.secondaryText
+            // UILabel.backgroundColor defaults to WHITE on iOS 6, not clear.
+            label.backgroundColor = UIColor.clear
             label.text = "No favorites yet - visit a subreddit and tap Favorite."
             view.addSubview(label)
             emptyLabel = label
@@ -52,8 +55,9 @@ class EditFavoritesVC: UIViewController, UITableViewDataSource, UITableViewDeleg
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: cellId) ?? UITableViewCell(style: .default, reuseIdentifier: cellId)
+        cell.backgroundColor = Theme.cellBackground
         cell.textLabel?.text = "r/\(favorites[indexPath.row])"
-        cell.textLabel?.textColor = UIColor.black
+        cell.textLabel?.textColor = Theme.primaryText
         cell.textLabel?.numberOfLines = 1
         cell.selectionStyle = .default
         return cell

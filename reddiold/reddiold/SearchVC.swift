@@ -17,6 +17,7 @@ class SearchVC: UIViewController, UISearchBarDelegate, UITableViewDataSource, UI
     private var tableView: UITableView?
     private var spinner: UIActivityIndicatorView?
     private var messageLabel: UILabel?
+    private var fallbackButton: UIButton?
     private var results: [SubredditResult] = []
     /// The term the currently-displayed results belong to — also what the fallback
     /// "go to r/x anyway" message offers when a subreddit search fails outright.
@@ -29,7 +30,7 @@ class SearchVC: UIViewController, UISearchBarDelegate, UITableViewDataSource, UI
     override func viewDidLoad() {
         super.viewDidLoad()
         title = "Search"
-        view.backgroundColor = UIColor.white
+        view.backgroundColor = Theme.pageBackground
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -39,59 +40,71 @@ class SearchVC: UIViewController, UISearchBarDelegate, UITableViewDataSource, UI
         // view.bounds already excludes the nav bar on real iOS 6 — don't use UIScreen.main.bounds.
         let bounds = view.bounds
 
-        let bar = UISearchBar(frame: CGRect(x: 0, y: 0, width: bounds.width, height: 44))
+        // Running cursor rather than hardcoded y values — the elements above the table each
+        // have their own height, and a fixed table top silently drifts whenever one changes.
+        let contentWidth = bounds.width - (Layout.margin * 2)
+        var y: CGFloat = 0
+
+        let bar = UISearchBar(frame: CGRect(x: 0, y: y, width: bounds.width, height: Layout.buttonHeight))
         bar.placeholder = "Search Reddit"
         bar.autocapitalizationType = .none
         bar.autocorrectionType = .no
-        bar.tintColor = UIColor.orange
+        bar.tintColor = Theme.accent
         bar.delegate = self
         view.addSubview(bar)
         searchBar = bar
         bar.becomeFirstResponder()
+        y += Layout.buttonHeight + 8
 
         let scope = UISegmentedControl(items: ["Subreddits", "Posts"])
-        scope.frame = CGRect(x: Layout.margin, y: 52, width: bounds.width - (Layout.margin * 2), height: 30)
+        scope.frame = CGRect(x: Layout.margin, y: y, width: contentWidth, height: 30)
         scope.selectedSegmentIndex = 0
-        scope.tintColor = UIColor.orange
+        scope.tintColor = Theme.accent
         view.addSubview(scope)
         scopeControl = scope
+        y += 30 + 8
 
-        let button = UIButton(type: .custom)
-        button.frame = CGRect(x: Layout.margin, y: 90, width: bounds.width - (Layout.margin * 2), height: 44)
-        button.backgroundColor = UIColor.orange
-        button.setTitle("Go", for: .normal)
-        button.setTitleColor(UIColor.white, for: .normal)
-        button.titleLabel?.font = UIFont.boldSystemFont(ofSize: 16)
-        button.layer.cornerRadius = 8
-        button.layer.masksToBounds = true
-        button.addTarget(self, action: #selector(goTapped), for: .touchUpInside)
+        let button = Theme.actionButton(title: "Go",
+                                        frame: CGRect(x: Layout.margin, y: y,
+                                                      width: contentWidth, height: Layout.buttonHeight),
+                                        target: self, action: #selector(goTapped))
         view.addSubview(button)
+        y += Layout.buttonHeight + 12
 
-        let tableTop: CGFloat = 146
+        let tableTop = y
         let table = UITableView(frame: CGRect(x: 0, y: tableTop, width: bounds.width, height: bounds.height - tableTop))
         table.dataSource = self
         table.delegate = self
         table.tableFooterView = UIView(frame: .zero)
+        Theme.apply(to: table)
         view.addSubview(table)
         tableView = table
 
-        let indicator = UIActivityIndicatorView(style: .gray)
+        let indicator = UIActivityIndicatorView(style: Theme.spinnerStyle)
         indicator.center = CGPoint(x: bounds.width / 2, y: tableTop + 40)
         view.addSubview(indicator)
         spinner = indicator
 
         let label = UILabel(frame: CGRect(x: Layout.margin, y: tableTop + 20,
-                                          width: bounds.width - (Layout.margin * 2), height: 60))
+                                          width: contentWidth, height: 60))
         label.textAlignment = .center
         label.numberOfLines = 0
         label.font = UIFont.systemFont(ofSize: 14)
-        label.textColor = UIColor.gray
+        label.textColor = Theme.secondaryText
         label.backgroundColor = UIColor.clear
         label.isHidden = true
-        label.isUserInteractionEnabled = true
-        label.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(messageTapped)))
         view.addSubview(label)
         messageLabel = label
+
+        // The exact-name jump used to be a tap recognizer on the message label, which reads
+        // as a status line rather than something you can act on. Same button style as Go.
+        let fallback = Theme.actionButton(title: "", frame: CGRect(x: Layout.margin, y: tableTop + 88,
+                                                                   width: contentWidth,
+                                                                   height: Layout.buttonHeight),
+                                          target: self, action: #selector(messageTapped))
+        fallback.isHidden = true
+        view.addSubview(fallback)
+        fallbackButton = fallback
     }
 
     @objc private func goTapped() {
@@ -109,6 +122,7 @@ class SearchVC: UIViewController, UISearchBarDelegate, UITableViewDataSource, UI
         results = []
         tableView?.reloadData()
         messageLabel?.isHidden = true
+        fallbackButton?.isHidden = true
         spinner?.startAnimating()
         RedditAPI.searchSubreddits(query: query) { [weak self] found, error in
             guard let self = self else { return }
@@ -117,7 +131,7 @@ class SearchVC: UIViewController, UISearchBarDelegate, UITableViewDataSource, UI
             guard self.lastQuery == query else { return }
             self.spinner?.stopAnimating()
             if let error = error {
-                self.showMessage(self.errorMessage(for: error, query: query))
+                self.showMessage(self.errorMessage(for: error))
                 return
             }
             if found.isEmpty {
@@ -132,16 +146,20 @@ class SearchVC: UIViewController, UISearchBarDelegate, UITableViewDataSource, UI
     private func showMessage(_ text: String) {
         messageLabel?.text = text
         messageLabel?.isHidden = false
+        if let query = lastQuery {
+            fallbackButton?.setTitle("Open r/\(query)", for: .normal)
+            fallbackButton?.isHidden = false
+        }
     }
 
     // Rate limiting is the failure people will actually hit here, and it makes search
-    // temporarily useless — so offer the old exact-name jump as an escape hatch rather than
-    // leaving them stuck (tapping the message opens r/<query> directly).
-    private func errorMessage(for error: Error, query: String) -> String {
+    // temporarily useless — so offer the old exact-name jump as an escape hatch (the button
+    // below the message) rather than leaving them stuck.
+    private func errorMessage(for error: Error) -> String {
         let code = (error as NSError).code
         switch code {
-        case 429: return "Rate limited by Reddit, try again shortly.\nTap here to open r/\(query) directly."
-        default: return "Couldn't search.\nTap here to open r/\(query) directly."
+        case 429: return "Rate limited by Reddit, try again shortly."
+        default: return "Couldn't search."
         }
     }
 
@@ -162,7 +180,7 @@ class SearchVC: UIViewController, UISearchBarDelegate, UITableViewDataSource, UI
 
     func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
         let result = results[indexPath.row]
-        let width = tableView.bounds.width - 30
+        let width = tableView.bounds.width - Layout.cellTextInset
         var height = TextMeasure.height(text: "r/\(result.name)", font: SearchVC.titleFont, width: width, numberOfLines: 1)
         if let summary = result.summary {
             height += TextMeasure.height(text: summary, font: SearchVC.summaryFont, width: width, numberOfLines: 2)
@@ -173,12 +191,14 @@ class SearchVC: UIViewController, UISearchBarDelegate, UITableViewDataSource, UI
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: cellId) ?? UITableViewCell(style: .subtitle, reuseIdentifier: cellId)
         let result = results[indexPath.row]
+        cell.backgroundColor = Theme.cellBackground
         cell.textLabel?.text = "r/\(result.name)"
         cell.textLabel?.font = SearchVC.titleFont
+        cell.textLabel?.textColor = Theme.primaryText
         cell.textLabel?.numberOfLines = 1
         cell.detailTextLabel?.text = result.summary
         cell.detailTextLabel?.font = SearchVC.summaryFont
-        cell.detailTextLabel?.textColor = UIColor.orange
+        cell.detailTextLabel?.textColor = Theme.accent
         cell.detailTextLabel?.numberOfLines = 2
         return cell
     }

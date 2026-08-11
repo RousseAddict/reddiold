@@ -37,22 +37,22 @@ class HomeVC: PostListVC {
 
         let dim = UIButton(type: .custom)
         dim.frame = overlay.bounds
-        dim.backgroundColor = UIColor(white: 0, alpha: 0.5)
+        dim.backgroundColor = Theme.menuDimOverlay
         dim.addTarget(self, action: #selector(closeMenu), for: .touchUpInside)
         overlay.addSubview(dim)
 
         let panel = UIView(frame: CGRect(x: -menuWidth, y: 0, width: menuWidth, height: bounds.height))
-        panel.backgroundColor = UIColor(white: 0.12, alpha: 1)
+        panel.backgroundColor = Theme.menuBackground
         overlay.addSubview(panel)
 
         let band = UIView(frame: CGRect(x: 0, y: 0, width: menuWidth, height: 78))
-        band.backgroundColor = UIColor.orange
+        band.backgroundColor = Theme.accent
         panel.addSubview(band)
 
         let header = UILabel(frame: CGRect(x: Layout.margin, y: 40,
                                            width: menuWidth - (Layout.margin * 2), height: 30))
         header.backgroundColor = .clear
-        header.textColor = UIColor.white
+        header.textColor = Theme.onAccent
         header.font = UIFont.boldSystemFont(ofSize: 22)
         header.text = "reddiold"
         band.addSubview(header)
@@ -72,18 +72,18 @@ class HomeVC: PostListVC {
             // left edge (the 4pt accent tab sits inside it).
             btn.contentEdgeInsets = UIEdgeInsets(top: 0, left: Layout.margin, bottom: 0, right: 0)
             btn.setTitle(itemTitle, for: .normal)
-            btn.setTitleColor(UIColor(white: 0.92, alpha: 1), for: .normal)
-            btn.setTitleColor(UIColor.orange, for: .highlighted)
+            btn.setTitleColor(Theme.menuText, for: .normal)
+            btn.setTitleColor(Theme.accent, for: .highlighted)
             btn.titleLabel?.font = UIFont.systemFont(ofSize: 16)
             btn.addTarget(self, action: sel, for: .touchUpInside)
             panel.addSubview(btn)
 
             let tab = UIView(frame: CGRect(x: 0, y: y + 14, width: 4, height: rowH - 28))
-            tab.backgroundColor = UIColor.orange
+            tab.backgroundColor = Theme.accent
             panel.addSubview(tab)
 
             let sep = UIView(frame: CGRect(x: 0, y: y + rowH - 0.5, width: menuWidth, height: 0.5))
-            sep.backgroundColor = UIColor(white: 1, alpha: 0.08)
+            sep.backgroundColor = Theme.menuSeparator
             panel.addSubview(sep)
 
             y += rowH
