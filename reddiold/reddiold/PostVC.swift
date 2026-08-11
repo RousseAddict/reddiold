@@ -381,7 +381,10 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         isLoadingGallery = true
         mediaBadgeLabel?.text = "Loading gallery..."
         mediaSpinner?.startAnimating()
-        RedditAPI.fetchGalleryImageURLs(permalink: post.permalink) { [weak self] urls, error in
+        // The thumbnail is passed so that a gallery whose grid can't be scraped can still fall
+        // back to its first image at full resolution (see RedditAPI.fullResURL).
+        RedditAPI.fetchGalleryImageURLs(permalink: post.permalink,
+                                        thumbnailURL: post.thumbnailURL) { [weak self] urls, error in
             guard let self = self else { return }
             self.isLoadingGallery = false
             self.mediaSpinner?.stopAnimating()

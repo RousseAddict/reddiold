@@ -24,6 +24,22 @@ final class RedditAPI {
     /// with no server-rendered comment tree or gallery grid. See commentsPath.
     private static let host = "https://www.reddit.com"
 
+    /// Reddit's classic host. Every path on it currently 302s to `/login` (see `host`), but it
+    /// is the *only* source of server-rendered HTML — the nested comment tree with scores, and
+    /// the gallery grid. So the HTML scrapes still try it first and fall back only when it
+    /// actually fails: if Reddit ever lifts the logged-out redirect, threading, comment scores
+    /// and multi-image galleries come back on their own with no code change.
+    private static let legacyHost = "https://old.reddit.com"
+
+    /// Set once a legacy-host scrape comes back as something other than the page we asked for,
+    /// so that every subsequent thread/gallery open doesn't pay for another ~315 KB login-page
+    /// download against an aggressive rate limiter.
+    ///
+    /// Deliberately in-memory only rather than persisted: it costs at most one wasted request
+    /// per app launch, and that is exactly what lets the full-fidelity path recover by itself
+    /// once Reddit stops walling the host. Also cleared by an explicit user refresh.
+    private static var legacyHostUnavailable = false
+
     private static let parseQueue = DispatchQueue(label: "com.reddiold.parse")
 
     // Comments are fetched on-demand per visit (not auto-refreshed on a timer like listings),
@@ -108,6 +124,17 @@ final class RedditAPI {
         }
         FeedCache.store(data, forKey: cacheKey)
         return nil
+    }
+
+    /// True if this HTML is really old.reddit.com's server-rendered thread page, rather than
+    /// the login page it now answers with. `commentarea` is the id of the wrapper div holding
+    /// the reply tree and appears nowhere in the login page. Same rationale as
+    /// `looksLikeAtomFeed`: a 200 status says nothing about what the body actually is, and the
+    /// login page is a 200. Checked instead of "did the parser find comments?" because a
+    /// genuinely comment-less thread page is a valid empty result, not a failure to fall back
+    /// from.
+    private static func looksLikeThreadPage(_ html: String) -> Bool {
+        return html.range(of: "commentarea") != nil
     }
 
     /// Percent-encodes a search term for use in a query string. Hand-rolled because
@@ -220,17 +247,16 @@ final class RedditAPI {
     /// view — to avoid extra requests against Reddit's rate limiter on every post shown.
     /// Cached indefinitely on disk keyed by permalink (gallery contents don't change).
     ///
-    /// ⚠️ Expected broken since 2026-08-11 for the same reason as commentsPath: the permalink
-    /// now comes from the www feed, and www serves a JS shell with no gallery grid. Not
-    /// re-probed against a live gallery post yet, so it's unconfirmed rather than certain.
-    static func fetchGalleryImageURLs(permalink: String, completion: @escaping ([String], Error?) -> Void) {
-        guard let url = URL(string: permalink) else {
-            completion([], NSError(domain: "RedditAPI", code: -1,
-                                    userInfo: [NSLocalizedDescriptionKey: "Invalid URL"]))
-            return
-        }
+    /// The grid is walled as of 2026-08-11 (www has no equivalent — its permalink page is an
+    /// 8 KB JS shell with no image URLs in it at all), so like fetchComments this tries the
+    /// legacy host first and degrades if it fails. The degraded result is the post's *first*
+    /// image at full resolution, derived from the feed thumbnail — see `fullResURL`.
+    static func fetchGalleryImageURLs(permalink: String, thumbnailURL: String?,
+                                      completion: @escaping ([String], Error?) -> Void) {
+        let path = legacyPermalink(permalink)
+        let firstImageOnly = fullResURL(fromPreview: thumbnailURL).map { [$0] } ?? []
 
-        if let cached = FeedCache.data(forKey: permalink) {
+        if let cached = FeedCache.data(forKey: path) {
             parseQueue.async {
                 let html = String(data: cached, encoding: .utf8) ?? ""
                 let urls = GalleryHTMLParser.imageURLs(fromHTML: html)
@@ -239,36 +265,81 @@ final class RedditAPI {
             return
         }
 
+        guard !legacyHostUnavailable, let url = URL(string: path) else {
+            DispatchQueue.main.async { completion(firstImageOnly, nil) }
+            return
+        }
+
         CurlFetcher.fetch(url: url, userAgent: userAgent, timeout: permalinkTimeout) { data, error in
             guard let data = data, error == nil else {
-                DispatchQueue.main.async { completion([], error) }
+                // Report the error only when there's nothing to show for it — otherwise the
+                // single-image fallback would be drawn as a failure by PostVC.
+                DispatchQueue.main.async {
+                    completion(firstImageOnly, firstImageOnly.isEmpty ? error : nil)
+                }
                 return
             }
-            FeedCache.store(data, forKey: permalink)
             parseQueue.async {
                 let html = String(data: data, encoding: .utf8) ?? ""
+                guard looksLikeThreadPage(html) else {
+                    legacyHostUnavailable = true
+                    DispatchQueue.main.async { completion(firstImageOnly, nil) }
+                    return
+                }
+                FeedCache.store(data, forKey: path)
                 let urls = GalleryHTMLParser.imageURLs(fromHTML: html)
-                DispatchQueue.main.async { completion(urls, nil) }
+                DispatchQueue.main.async { completion(urls.isEmpty ? firstImageOnly : urls, nil) }
             }
         }
     }
 
-    /// Scrapes the same plain (non-JS) permalink HTML page used by fetchGalleryImageURLs —
-    /// unlike the `.rss` comments feed (flat, document-ordered, no score/threading data at
-    /// all), this page server-renders the full nested reply tree as real `<div class="child">`
-    /// DOM nesting, which is what makes comment depth/score possible (see CommentHTMLParser
-    /// below). No trailing slug segment needed — CurlFetcher follows Reddit's redirect to the
-    /// canonical slugged URL (curl_bridge_set_follow_redirects, already set in CurlFetcher).
+    /// Moves a permalink from the feed's host onto `legacyHost`, the only one that
+    /// server-renders the gallery grid. Splits on "reddit.com" rather than rebuilding from
+    /// components so it leaves an already-legacy URL alone.
+    private static func legacyPermalink(_ permalink: String) -> String {
+        guard let host = permalink.range(of: "reddit.com") else { return permalink }
+        return legacyHost + String(permalink[host.upperBound...])
+    }
+
+    /// `preview.redd.it/{mediaId}.jpg?width=140&…&s=…` -> `i.redd.it/{mediaId}.jpg`, the
+    /// original upload (verified: HTTP 200, ~1 MB, image/jpeg). The gallery Atom entry carries
+    /// exactly one media id, in its thumbnail, so this recovers that one image at full size
+    /// when the grid is unreachable.
+    ///
+    /// The preview URL can't simply be re-parameterised to a bigger `width` instead: its `s=`
+    /// signature covers the query string, so an edited one is rejected with HTTP 403 (verified).
+    /// Only preview.redd.it is handled — the other thumbnail hosts Reddit uses
+    /// (b.thumbs.redditmedia.com, external-preview.redd.it) have no i.redd.it counterpart.
+    private static func fullResURL(fromPreview raw: String?) -> String? {
+        guard var tail = raw, tail.range(of: "preview.redd.it/") != nil else { return nil }
+        if let query = tail.range(of: "?") {
+            tail = String(tail[tail.startIndex..<query.lowerBound])
+        }
+        guard let slash = tail.range(of: "/", options: .backwards) else { return nil }
+        let file = String(tail[slash.upperBound...])
+        // Needs an extension — i.redd.it serves nothing without one.
+        guard file.range(of: ".") != nil else { return nil }
+        return "https://i.redd.it/\(file)"
+    }
+
+    /// Scrapes old.reddit.com's plain (non-JS) permalink HTML page: unlike the `.rss` comments
+    /// feed (flat, document-ordered, no score/threading data at all), it server-renders the
+    /// full nested reply tree as real `<div class="child">` DOM nesting, which is what makes
+    /// comment depth and score possible (see CommentHTMLParser below). No trailing slug segment
+    /// needed — CurlFetcher follows Reddit's redirect to the canonical slugged URL
+    /// (curl_bridge_set_follow_redirects, already set in CurlFetcher).
+    ///
+    /// That host is walled as of 2026-08-11, so this is a two-tier fetch: try the scrape first
+    /// and, only if the response isn't a real thread page, degrade to `fetchFlatComments`. The
+    /// order matters — it means the full-fidelity path is what gets used again automatically if
+    /// Reddit lifts the wall, rather than the app being permanently pinned to the degraded feed.
     static func fetchComments(subreddit: String, postId: String, limit: Int?,
                                forceRefresh: Bool = false,
                                completion: @escaping ([Comment], PostStats?, Error?) -> Void) {
         let path = commentsPath(subreddit: subreddit, postId: postId, limit: limit)
 
-        guard let url = URL(string: path) else {
-            completion([], nil, NSError(domain: "RedditAPI", code: -1,
-                                         userInfo: [NSLocalizedDescriptionKey: "Invalid URL"]))
-            return
-        }
+        // An explicit refresh is also the user's way of retrying the good path.
+        if forceRefresh { legacyHostUnavailable = false }
 
         if !forceRefresh, let cached = FeedCache.data(forKey: path, maxAge: commentsCacheMaxAge) {
             parseQueue.async {
@@ -280,18 +351,85 @@ final class RedditAPI {
             return
         }
 
+        guard !legacyHostUnavailable, let url = URL(string: path) else {
+            fetchFlatComments(subreddit: subreddit, postId: postId,
+                              forceRefresh: forceRefresh, completion: completion)
+            return
+        }
+
         CurlFetcher.fetch(url: url, userAgent: userAgent, timeout: permalinkTimeout) { data, error in
             guard let data = data, error == nil else {
-                DispatchQueue.main.async { completion([], nil, error) }
+                // A transfer failure (timeout, 429) is transient and proves nothing about the
+                // wall, so fall back for this one request without latching the flag.
+                fetchFlatComments(subreddit: subreddit, postId: postId,
+                                  forceRefresh: forceRefresh, completion: completion)
                 return
             }
-            FeedCache.store(data, forKey: path)
             parseQueue.async {
                 let html = String(data: data, encoding: .utf8) ?? ""
+                guard looksLikeThreadPage(html) else {
+                    legacyHostUnavailable = true
+                    fetchFlatComments(subreddit: subreddit, postId: postId,
+                                      forceRefresh: forceRefresh, completion: completion)
+                    return
+                }
+                FeedCache.store(data, forKey: path)
                 let comments = CommentHTMLParser.parseComments(fromHTML: html)
                 let stats = PostStats(html: html)
                 DispatchQueue.main.async { completion(comments, stats, nil) }
             }
+        }
+    }
+
+    /// Degraded comment source for when the legacy host won't serve a thread page: the Atom
+    /// comments feed, which www still serves unauthenticated. It is flat and document-ordered
+    /// with no parent/depth and no score, so every comment lands at depth 0 with `score` nil —
+    /// PostVC then draws no thread bars and no score, which its optionals already allow. There
+    /// is also no post score/comment count in a feed, hence the nil PostStats. Reddit caps this
+    /// feed at ~100 entries and ignores `limit`, so "load more" can't grow it.
+    ///
+    /// Kept as a fallback rather than becoming the primary source: it loses the threading,
+    /// scores and full comment count that are the whole point of the HTML scrape.
+    private static func fetchFlatComments(subreddit: String, postId: String, forceRefresh: Bool,
+                                          completion: @escaping ([Comment], PostStats?, Error?) -> Void) {
+        // Its own cache key (distinct from commentsPath's), so a flat result can never be
+        // served up as though it were a threaded one, or vice versa.
+        let path = "\(host)/r/\(subreddit)/comments/\(postId)/.rss"
+        guard let url = URL(string: path) else {
+            DispatchQueue.main.async {
+                completion([], nil, NSError(domain: "RedditAPI", code: -1,
+                                             userInfo: [NSLocalizedDescriptionKey: "Invalid URL"]))
+            }
+            return
+        }
+
+        if !forceRefresh, let cached = FeedCache.data(forKey: path, maxAge: commentsCacheMaxAge) {
+            parseFlatComments(cached, completion: completion)
+            return
+        }
+
+        CurlFetcher.fetch(url: url, userAgent: userAgent) { data, error in
+            guard let data = data, error == nil else {
+                DispatchQueue.main.async { completion([], nil, error) }
+                return
+            }
+            if let invalid = validatedFeed(data, cacheKey: path) {
+                DispatchQueue.main.async { completion([], nil, invalid) }
+                return
+            }
+            parseFlatComments(data, completion: completion)
+        }
+    }
+
+    private static func parseFlatComments(_ data: Data,
+                                          completion: @escaping ([Comment], PostStats?, Error?) -> Void) {
+        parseQueue.async {
+            // The feed mixes the post's own t3_ entry in with the comments.
+            let comments = AtomFeedParser.parseEntries(data: data)
+                .filter { $0.id.hasPrefix("t1_") }
+                .map { Comment(id: $0.id, author: $0.authorName, bodyHTML: $0.contentHTML,
+                                createdAt: AtomDate.parse($0.updated)) }
+            DispatchQueue.main.async { completion(comments, nil, nil) }
         }
     }
 
@@ -315,17 +453,13 @@ final class RedditAPI {
     /// Doubles as the FeedCache key, so a different limit is naturally a different cache
     /// entry — raising the limit via "load more" can't be served the smaller cached page.
     ///
-    /// ⚠️ KNOWN BROKEN since 2026-08-11. This scrapes a server-rendered nested comment tree,
-    /// which only old.reddit.com ever produced; that host is now behind the logged-out
-    /// redirect (see `host`). www.reddit.com answers this path with an ~8 KB shreddit JS
-    /// shell — no `thing id-t1_`, no `data-type="comment"`, no scores — so CommentHTMLParser
-    /// finds nothing and threads come back empty. Same applies to the gallery scrape.
-    /// The fallback that does still work is the flat comments feed
-    /// (`/r/{sub}/comments/{id}/.rss`, 200, `t1_` entries) but it carries no depth/parent and
-    /// no score, so adopting it means giving up threading, thread bars and comment scores.
-    /// Deliberately left unchanged pending that decision rather than silently degraded.
+    /// Pinned to `legacyHost`, not `host`: only old.reddit.com ever server-rendered the nested
+    /// comment tree. www answers this path with an ~8 KB shreddit JS shell — no
+    /// `thing id-t1_`, no `data-type="comment"`, no scores — so pointing it at www would
+    /// silently produce empty threads. Expect this to fail while the wall is up;
+    /// `fetchComments` handles that by degrading to the flat feed.
     private static func commentsPath(subreddit: String, postId: String, limit: Int?) -> String {
-        let base = "\(host)/r/\(subreddit)/comments/\(postId)/"
+        let base = "\(legacyHost)/r/\(subreddit)/comments/\(postId)/"
         guard let limit = limit else { return base }
         return base + "?limit=\(limit)"
     }
