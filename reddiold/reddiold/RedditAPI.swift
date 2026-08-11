@@ -1,12 +1,25 @@
 import Foundation
 
-/// High-level Reddit access built on the public Atom/RSS feeds (old.reddit.com/*.rss) —
+/// High-level Reddit access built on the public Atom/RSS feeds (www.reddit.com/*.rss) —
 /// no OAuth, no API key. Bare-minimum version: always routes through CurlFetcher since
 /// this is an iOS 6-only build (iOS 6 Secure Transport is CBC-only and can't negotiate
 /// the GCM cipher suites Reddit's edge requires).
 final class RedditAPI {
 
     static let userAgent = "reddiold/0.1 (iOS; +https://github.com/rousseaddict/reddiold)"
+
+    /// Was `old.reddit.com` until 2026-08-11, when Reddit put that host entirely behind a
+    /// logged-out redirect: *every* path (front page, subreddit, search, comment permalink)
+    /// answers `302 → /login/?reason=lor2` with an empty body, and no cookie avoids it.
+    /// Because CurlFetcher doesn't follow redirects, that read as a successful 0-byte
+    /// response — 0 Atom entries — so every screen showed the empty state rather than an
+    /// error. `www.reddit.com` still serves the same feeds unauthenticated, and its listing
+    /// and search Atom is structurally identical (`t3_` ids, media:thumbnail, category term,
+    /// the same [link]/[comments] anchors), so this host is a drop-in for all of them.
+    ///
+    /// It is NOT a drop-in for the HTML scrapes: www serves a JS shell for permalink pages,
+    /// with no server-rendered comment tree or gallery grid. See commentsPath.
+    private static let host = "https://www.reddit.com"
 
     private static let parseQueue = DispatchQueue(label: "com.reddiold.parse")
 
@@ -76,7 +89,7 @@ final class RedditAPI {
     /// parses them unchanged. The returned path doubles as the FeedCache key, so two different
     /// queries (or sorts) never share cached content.
     private static func listingPath(subreddit: String?, query: String?, sort: Sort) -> String {
-        var path = "https://old.reddit.com"
+        var path = host
         if let subreddit = subreddit, !subreddit.isEmpty {
             path += "/r/\(subreddit)"
         }
@@ -150,6 +163,10 @@ final class RedditAPI {
     /// Only called on-demand (user taps "Gallery" in PostVC) — never from the listing/list
     /// view — to avoid extra requests against Reddit's rate limiter on every post shown.
     /// Cached indefinitely on disk keyed by permalink (gallery contents don't change).
+    ///
+    /// ⚠️ Expected broken since 2026-08-11 for the same reason as commentsPath: the permalink
+    /// now comes from the www feed, and www serves a JS shell with no gallery grid. Not
+    /// re-probed against a live gallery post yet, so it's unconfirmed rather than certain.
     static func fetchGalleryImageURLs(permalink: String, completion: @escaping ([String], Error?) -> Void) {
         guard let url = URL(string: permalink) else {
             completion([], NSError(domain: "RedditAPI", code: -1,
@@ -241,8 +258,18 @@ final class RedditAPI {
 
     /// Doubles as the FeedCache key, so a different limit is naturally a different cache
     /// entry — raising the limit via "load more" can't be served the smaller cached page.
+    ///
+    /// ⚠️ KNOWN BROKEN since 2026-08-11. This scrapes a server-rendered nested comment tree,
+    /// which only old.reddit.com ever produced; that host is now behind the logged-out
+    /// redirect (see `host`). www.reddit.com answers this path with an ~8 KB shreddit JS
+    /// shell — no `thing id-t1_`, no `data-type="comment"`, no scores — so CommentHTMLParser
+    /// finds nothing and threads come back empty. Same applies to the gallery scrape.
+    /// The fallback that does still work is the flat comments feed
+    /// (`/r/{sub}/comments/{id}/.rss`, 200, `t1_` entries) but it carries no depth/parent and
+    /// no score, so adopting it means giving up threading, thread bars and comment scores.
+    /// Deliberately left unchanged pending that decision rather than silently degraded.
     private static func commentsPath(subreddit: String, postId: String, limit: Int?) -> String {
-        let base = "https://old.reddit.com/r/\(subreddit)/comments/\(postId)/"
+        let base = "\(host)/r/\(subreddit)/comments/\(postId)/"
         guard let limit = limit else { return base }
         return base + "?limit=\(limit)"
     }
@@ -254,7 +281,7 @@ final class RedditAPI {
     /// the same search, which is exactly what trips Reddit's rate limiter.
     static func searchSubreddits(query: String, forceRefresh: Bool = false,
                                   completion: @escaping ([SubredditResult], Error?) -> Void) {
-        let path = "https://old.reddit.com/subreddits/search/.rss?q=\(percentEncodeQuery(query))"
+        let path = "\(host)/subreddits/search/.rss?q=\(percentEncodeQuery(query))"
         guard let url = URL(string: path) else {
             completion([], NSError(domain: "RedditAPI", code: -1,
                                     userInfo: [NSLocalizedDescriptionKey: "Invalid URL"]))
@@ -301,7 +328,7 @@ struct SubredditResult {
         self.summary = text.isEmpty ? nil : text
     }
 
-    /// "https://old.reddit.com/r/Retro/" -> "Retro"
+    /// "https://www.reddit.com/r/Retro/" -> "Retro"
     static func extractName(fromLink link: String) -> String? {
         guard let range = link.range(of: "/r/") else { return nil }
         let rest = link[range.upperBound...]

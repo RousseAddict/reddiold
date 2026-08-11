@@ -47,7 +47,8 @@ struct AtomEntry {
     var updated: String = ""
 }
 
-/// Parses Reddit's Atom feed XML (old.reddit.com/*.rss) into AtomEntry structs.
+/// Parses Reddit's Atom feed XML (www.reddit.com/*.rss) into AtomEntry structs.
+/// The www feed is structurally identical to the old.reddit.com one this was written against.
 final class AtomFeedParser: NSObject, XMLParserDelegate {
 
     private var entries: [AtomEntry] = []
