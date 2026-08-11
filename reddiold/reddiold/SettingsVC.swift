@@ -4,8 +4,14 @@ import UIKit
 /// TTL, and a "Clear Cache" action that wipes the disk feed/comment/thumbnail cache
 /// (FeedCache) and the in-memory thumbnail cache, then broadcasts
 /// PostListVC.cacheDidClearNotification so any live Home/Subreddit screen drops its
-/// per-sort in-memory cache too. No UIAlertController confirmation (iOS8+ only) — just an
-/// inline status label, same proven pattern as the error/empty labels elsewhere.
+/// per-sort in-memory cache too. No UIAlertController confirmation (iOS8+ only).
+///
+/// Clear Cache is deliberately **last** and is a **single row**. It used to lead the screen as
+/// a button plus a size caption plus a result caption — 114pt of the three stacked elements,
+/// with the status caption's height reserved even while hidden — which made a destructive
+/// maintenance action the most prominent thing here and pushed the actual preferences below
+/// the fold on a 3.5-inch screen. The size now lives in the button's own title and the result
+/// is shown by the button itself (see clearCacheTapped), so the whole block is 44pt.
 ///
 /// Laid out inside a UIScrollView with a running `y` cursor rather than hardcoded offsets:
 /// the content is now taller than a 3.5-inch screen, and hand-tuned absolute y values were
@@ -13,11 +19,23 @@ import UIKit
 /// scroll view — never a table/collection view, which isn't safe to nest on iOS 6.
 class SettingsVC: UIViewController {
     private var scrollView: UIScrollView?
-    private var sizeLabel: UILabel?
-    private var statusLabel: UILabel?
+    private var cacheButton: UIButton?
+    private var cacheSpinner: UIActivityIndicatorView?
     private var ttlControl: UISegmentedControl?
     private var sortControl: UISegmentedControl?
     private var commentLimitControl: UISegmentedControl?
+
+    /// Size measured by the just-finished wipe, applied to the button once the "Cache cleared"
+    /// flash ends. Read back from disk rather than assumed to be 0, so a wipe that only
+    /// partially succeeded doesn't claim otherwise.
+    private var clearedCacheBytes: Int64 = 0
+
+    /// Named, and static so it isn't recreated per call — a queue built inside a frequently
+    /// called function burns a thread each time and the 4S caps out at 512.
+    private static let cacheQueue = DispatchQueue(label: "com.reddiold.settings.cache")
+
+    /// How long the green "Cache cleared" state holds before fading back.
+    private static let confirmDuration: TimeInterval = 1.2
 
     private static let sectionGap: CGFloat = 24
     private static let labelGap: CGFloat = 6
@@ -31,7 +49,12 @@ class SettingsVC: UIViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        guard scrollView == nil else { return }
+        guard scrollView == nil else {
+            // Built once, but the cache will have grown while the user was browsing, and that
+            // number is now on the button rather than in a caption nobody reads.
+            refreshCacheButton()
+            return
+        }
         let bounds = view.bounds
         let contentWidth = bounds.width - (Layout.margin * 2)
 
@@ -41,25 +64,6 @@ class SettingsVC: UIViewController {
         scrollView = scroll
 
         var y = Layout.margin
-
-        let button = Theme.actionButton(title: "Clear Cache",
-                                        frame: CGRect(x: Layout.margin, y: y,
-                                                      width: contentWidth, height: Layout.buttonHeight),
-                                        target: self, action: #selector(clearCacheTapped))
-        scroll.addSubview(button)
-        y += Layout.buttonHeight + SettingsVC.labelGap
-
-        let size = makeCaption(width: contentWidth, y: y, color: Theme.secondaryText)
-        scroll.addSubview(size)
-        sizeLabel = size
-        refreshCacheSizeLabel()
-        y += size.frame.height + SettingsVC.hintGap
-
-        let status = makeCaption(width: contentWidth, y: y, color: Theme.secondaryText)
-        status.isHidden = true
-        scroll.addSubview(status)
-        statusLabel = status
-        y += status.frame.height + SettingsVC.sectionGap
 
         y = addSection(to: scroll, y: y, width: contentWidth,
                        title: "Sort posts by:",
@@ -85,7 +89,33 @@ class SettingsVC: UIViewController {
                        hint: "Cached posts are always shown instantly. \"Never\" means only pull-to-refresh fetches new content.",
                        store: { self.ttlControl = $0 })
 
+        // addSection already left a section gap below the last hint. Headed like the settings
+        // above it, so it reads as a section of this screen rather than a stray button.
+        y = addHeading(to: scroll, y: y, width: contentWidth, text: "Cache management:")
+
+        let button = Theme.actionButton(title: "Clear Cache",
+                                        frame: CGRect(x: Layout.margin, y: y,
+                                                      width: contentWidth, height: Layout.buttonHeight),
+                                        target: self, action: #selector(clearCacheTapped))
+        scroll.addSubview(button)
+        cacheButton = button
+        cacheSpinner = Theme.buttonSpinner(in: button)
+        refreshCacheButton()
+        y += Layout.buttonHeight + Layout.margin
+
         scroll.contentSize = CGSize(width: bounds.width, height: y)
+    }
+
+    /// A section heading, returning the y to continue from. Shared by the settings sections and
+    /// the cache block so the cache row can't drift out of step with them.
+    private func addHeading(to scroll: UIScrollView, y: CGFloat, width: CGFloat, text: String) -> CGFloat {
+        let label = UILabel(frame: CGRect(x: Layout.margin, y: y, width: width, height: 18))
+        label.font = UIFont.systemFont(ofSize: 13)
+        label.textColor = Theme.headingText
+        label.backgroundColor = UIColor.clear
+        label.text = text
+        scroll.addSubview(label)
+        return y + label.frame.height + SettingsVC.labelGap
     }
 
     /// One "title / segmented control / hint" block, returning the y to continue from.
@@ -97,11 +127,7 @@ class SettingsVC: UIViewController {
                             store: (UISegmentedControl) -> Void) -> CGFloat {
         var y = y
 
-        let titleLabel = makeCaption(width: width, y: y, color: Theme.headingText)
-        titleLabel.text = title
-        titleLabel.textAlignment = .left
-        scroll.addSubview(titleLabel)
-        y += titleLabel.frame.height + SettingsVC.labelGap
+        y = addHeading(to: scroll, y: y, width: width, text: title)
 
         let control = UISegmentedControl(items: items)
         control.frame = CGRect(x: Layout.margin, y: y, width: width, height: 30)
@@ -126,15 +152,6 @@ class SettingsVC: UIViewController {
         return y
     }
 
-    private func makeCaption(width: CGFloat, y: CGFloat, color: UIColor) -> UILabel {
-        let label = UILabel(frame: CGRect(x: Layout.margin, y: y, width: width, height: 18))
-        label.textAlignment = .center
-        label.font = UIFont.systemFont(ofSize: 13)
-        label.textColor = color
-        label.backgroundColor = UIColor.clear
-        return label
-    }
-
     @objc private func sortChanged() {
         guard let index = sortControl?.selectedSegmentIndex else { return }
         AppSettings.listingSortIndex = index
@@ -150,8 +167,25 @@ class SettingsVC: UIViewController {
         AppSettings.autoRefreshTTLIndex = index
     }
 
-    private func refreshCacheSizeLabel() {
-        sizeLabel?.text = "Cache size: \(SettingsVC.formattedSize(FeedCache.totalSizeBytes()))"
+    /// Measures the cache off-main and puts the result in the button's title.
+    private func refreshCacheButton() {
+        SettingsVC.cacheQueue.async {
+            let bytes = FeedCache.totalSizeBytes()
+            DispatchQueue.main.async { [weak self] in
+                self?.applyCacheState(bytes: bytes)
+            }
+        }
+    }
+
+    /// An empty cache disables the button rather than leaving a tap that silently does nothing
+    /// (and would otherwise flash a success it didn't earn).
+    private func applyCacheState(bytes: Int64) {
+        guard let button = cacheButton else { return }
+        let isEmpty = bytes <= 0
+        button.setTitle(isEmpty ? "Cache is empty"
+                                : "Clear Cache (\(SettingsVC.formattedSize(bytes)))", for: .normal)
+        button.isEnabled = !isEmpty
+        button.alpha = isEmpty ? 0.4 : 1
     }
 
     // No ByteCountFormatter — kept to plain arithmetic + String(format:) for consistency
@@ -164,12 +198,39 @@ class SettingsVC: UIViewController {
         return String(format: "%.1f MB", kb / 1024)
     }
 
+    /// The wipe walks and deletes every cached file, so with a full cache it stalls the main
+    /// thread long enough that the tap reads as a freeze — hence the background queue and the
+    /// button's own progress state. The button also *is* the confirmation: it flashes green,
+    /// which is far more noticeable than the 13pt grey caption this replaced.
     @objc private func clearCacheTapped() {
-        FeedCache.clearAll()
-        PostListVC.clearMemoryCaches()
-        NotificationCenter.default.post(name: PostListVC.cacheDidClearNotification, object: nil)
-        refreshCacheSizeLabel()
-        statusLabel?.text = "Cache cleared."
-        statusLabel?.isHidden = false
+        guard let button = cacheButton, button.isEnabled else { return }
+        button.isEnabled = false
+        button.setTitle("Clearing...", for: .normal)
+        cacheSpinner?.startAnimating()
+
+        SettingsVC.cacheQueue.async {
+            FeedCache.clearAll()
+            let bytes = FeedCache.totalSizeBytes()
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.cacheSpinner?.stopAnimating()
+                // Both touch UIKit-side state, so they belong on the main thread.
+                PostListVC.clearMemoryCaches()
+                NotificationCenter.default.post(name: PostListVC.cacheDidClearNotification, object: nil)
+                self.clearedCacheBytes = bytes
+                self.cacheButton?.setTitle("Cache cleared", for: .normal)
+                self.cacheButton?.backgroundColor = Theme.confirm
+                // The button stays disabled through the flash, so a second tap can't land here.
+                self.perform(#selector(SettingsVC.restoreCacheButton), with: nil,
+                             afterDelay: SettingsVC.confirmDuration)
+            }
+        }
+    }
+
+    @objc private func restoreCacheButton() {
+        UIView.animate(withDuration: 0.25) {
+            self.cacheButton?.backgroundColor = Theme.accent
+        }
+        applyCacheState(bytes: clearedCacheBytes)
     }
 }

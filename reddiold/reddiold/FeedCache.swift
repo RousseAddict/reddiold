@@ -64,15 +64,19 @@ final class FeedCache {
         }
     }
 
-    /// Total bytes currently on disk across all cached feed/comment/thumbnail entries —
-    /// shown on the Settings screen next to "Clear Cache".
+    /// Total bytes currently on disk across all cached feed/comment/thumbnail entries — shown
+    /// in the Settings "Clear Cache" button title. Walks every file, so it's disk I/O: call it
+    /// off the main thread.
     static func totalSizeBytes() -> Int64 {
         guard let contents = try? FileManager.default.contentsOfDirectory(atPath: directory) else { return 0 }
         var total: Int64 = 0
         for name in contents {
             let filePath = (directory as NSString).appendingPathComponent(name)
             if let attrs = try? FileManager.default.attributesOfItem(atPath: filePath),
-               let size = attrs[.size] as? Int64 {
+               // (x as? NSNumber)?.int64Value, never `as? Int64` — the direct numeric bridging
+               // cast silently returns nil on this project's iOS 6 / Swift 5.1.5 runtime, which
+               // made this quietly report 0 bytes for a full cache.
+               let size = (attrs[.size] as? NSNumber)?.int64Value {
                 total += size
             }
         }

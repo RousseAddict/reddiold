@@ -84,6 +84,10 @@ struct Theme {
     /// Text/glyphs drawn on top of `accent`.
     static var onAccent: UIColor { return UIColor.white }
     static var link: UIColor { return UIColor.blue }
+    /// Momentary "that worked" background on an action button that has no other result to show
+    /// (Settings > Clear Cache). Green rather than `accent` so the flash actually reads as a
+    /// change from the button's normal state.
+    static var confirm: UIColor { return UIColor(red: 0.30, green: 0.69, blue: 0.31, alpha: 1) }
     /// Behind an image that hasn't loaded yet.
     static var imagePlaceholder: UIColor { return UIColor(white: 0.92, alpha: 1) }
 
