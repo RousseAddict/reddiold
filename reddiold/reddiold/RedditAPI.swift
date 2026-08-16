@@ -57,6 +57,14 @@ final class RedditAPI {
     /// ~200 and re-downloads the whole thing, so "load more" stops escalating here.
     static let maxCommentLimit = 200
 
+    /// Entries per listing request. Reddit's default is 25, which dead-ends the feed early;
+    /// asking for more is FREE in rate-limit terms — it's the same single request, just a
+    /// bigger body (~30 KB at 25, ~60 KB at 50), which is why this is preferred over `after=`
+    /// pagination. 100 is accepted too, but 50 keeps the parse and the thumbnail working set
+    /// modest on a 512 MB 4S. Part of the FeedCache key, so changing it orphans old entries
+    /// (harmless — they just get refetched once).
+    private static let listingPageSize = 50
+
     /// hot/rising apply only to plain listings; relevance/comments only to search results.
     /// new/top are valid for both.
     enum Sort: String {
@@ -174,10 +182,10 @@ final class RedditAPI {
             path += "/r/\(subreddit)"
         }
         guard let query = query, !query.isEmpty else {
-            path += "/\(sort.rawValue)/.rss"
+            path += "/\(sort.rawValue)/.rss?limit=\(listingPageSize)"
             return path
         }
-        path += "/search/.rss?q=\(percentEncodeQuery(query))&sort=\(sort.rawValue)"
+        path += "/search/.rss?q=\(percentEncodeQuery(query))&sort=\(sort.rawValue)&limit=\(listingPageSize)"
         if let subreddit = subreddit, !subreddit.isEmpty {
             path += "&restrict_sr=on"
         }
