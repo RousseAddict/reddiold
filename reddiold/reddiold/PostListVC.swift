@@ -205,8 +205,19 @@ class PostListVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
             return
         }
 
+        // "Show cached content instantly, no spinner" was only true in spirit: resolving the
+        // cache is an off-main disk read plus a full Atom parse (now 50 entries), and it only
+        // starts once the push animation has finished — several hundred ms of blank white with
+        // no sign of life, which reads as a screen that failed rather than one that's working.
+        // Worst on FavoritesVC: the menu builds a fresh instance every tap, so its in-memory
+        // postsCache is always cold, and its "+"-joined multireddit is the largest feed here.
+        if posts.isEmpty { spinner?.startAnimating() }
+
         RedditAPI.cachedListing(subreddit: subreddit, query: searchQuery, sort: sort) { [weak self] cachedPosts in
             guard let self = self, self.currentSort() == sort else { return }
+            // Either there's content to show now, or fetchFresh restarts it below — both happen
+            // in this same run-loop turn, so stopping here can't flicker.
+            self.spinner?.stopAnimating()
             if !cachedPosts.isEmpty {
                 self.postsCache[sort] = cachedPosts
                 self.posts = cachedPosts
