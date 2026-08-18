@@ -70,7 +70,7 @@ struct Post {
         if let range = raw.range(of: "submitted by", options: .caseInsensitive) {
             raw = String(raw[..<range.lowerBound])
         }
-        let text = HTMLUtil.stripTags(raw)
+        let text = HTMLUtil.blockText(raw)
         return text.isEmpty ? nil : text
     }
 

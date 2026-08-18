@@ -756,7 +756,7 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
                                             width: textWidth, numberOfLines: 0)
             return height + 24
         }
-        let body = HTMLUtil.stripTags(comment.bodyHTML)
+        let body = HTMLUtil.blockText(comment.bodyHTML)
         let bodyHeight = TextMeasure.height(text: body, font: PostVC.bodyFont, width: textWidth,
                                             numberOfLines: bodyLines(for: comment))
         return bodyHeight + PostVC.authorFont.lineHeight + 24
@@ -805,7 +805,7 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
             cell.textLabel?.numberOfLines = 0
             cell.detailTextLabel?.text = nil
         } else {
-            cell.textLabel?.text = HTMLUtil.stripTags(comment.bodyHTML)
+            cell.textLabel?.text = HTMLUtil.blockText(comment.bodyHTML)
             cell.textLabel?.font = PostVC.bodyFont
             cell.textLabel?.textColor = Theme.primaryText
             cell.textLabel?.numberOfLines = bodyLines(for: comment)

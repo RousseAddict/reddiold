@@ -174,6 +174,10 @@ struct HTMLUtil {
         "&apos;": "'", "&nbsp;": " "
     ]
 
+    /// Flattens markup to a single run of text, discarding block structure. For anywhere a body
+    /// is shown as a one-or-two-line summary (a subreddit description in a search result), where
+    /// embedded newlines would just break the row layout. Use `blockText` for anything the user
+    /// actually reads.
     static func stripTags(_ html: String) -> String {
         var result = ""
         var inTag = false
@@ -184,6 +188,93 @@ struct HTMLUtil {
         }
         let decoded = decodeEntities(result)
         return asciiFold(decoded).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Same as `stripTags`, but turns block-level markup into real line breaks.
+    ///
+    /// Reddit's Atom `<content>` carries the markdown-rendered HTML with **no newlines in it at
+    /// all** — verified against a live feed, block boundaries arrive as a single space
+    /// (`</h1> <p>`, `</p> <p>`). So dropping the tags outright, as `stripTags` does, runs the
+    /// heading, every paragraph and every list item together into one wall of text. This markup
+    /// is the only place that structure still exists, so the breaks have to be recovered here
+    /// rather than from the whitespace.
+    ///
+    /// Deliberately plain `String`, not `NSAttributedString`: `UILabel.attributedText` exists on
+    /// iOS 6, but the useful half of it (`NSHTMLTextDocumentType` import, paragraph-style-per-
+    /// range measuring) is iOS 7+, and the app's row heights all come from
+    /// `UILabel.sizeThatFits` — which handles `\n` correctly with `numberOfLines = 0`.
+    static func blockText(_ html: String) -> String {
+        var result = ""
+        var tagName = ""
+        var inTag = false
+        for ch in html {
+            if ch == "<" { inTag = true; tagName = ""; continue }
+            if ch == ">" {
+                inTag = false
+                result += lineBreak(forTag: tagName)
+                continue
+            }
+            if inTag { tagName.append(ch) } else { result.append(ch) }
+        }
+        return normalizeBreaks(asciiFold(decodeEntities(result)))
+    }
+
+    /// Tags that begin or end a block, i.e. that force a line break where they appear. Emitted
+    /// for both the opening and closing form, so `</p> <p>` yields a blank line between
+    /// paragraphs once `normalizeBreaks` has collapsed the run.
+    private static let blockTags: Set<String> = [
+        "p", "div", "br", "hr", "blockquote", "pre", "table", "tr", "ul", "ol",
+        "h1", "h2", "h3", "h4", "h5", "h6"
+    ]
+
+    /// `tag` is the raw text between the angle brackets, so it can be `p`, `/p`, `br /`,
+    /// `a href="..."` or an HTML comment's `!-- SC_OFF --`. Only the name matters.
+    private static func lineBreak(forTag tag: String) -> String {
+        var name = tag
+        let isClosing = name.hasPrefix("/")
+        if isClosing { name = String(name.dropFirst()) }
+        if let end = name.firstIndex(where: { $0 == " " || $0 == "/" || $0 == "\t" || $0 == "\n" }) {
+            name = String(name[..<end])
+        }
+        name = name.lowercased()
+        // ASCII "- " rather than a bullet glyph: iOS 6's system font only has pre-2014 glyphs,
+        // and a missing one draws as an empty box.
+        if name == "li" { return isClosing ? "" : "\n- " }
+        return blockTags.contains(name) ? "\n" : ""
+    }
+
+    /// Collapses the whitespace left behind by tag removal: runs of spaces/tabs become one
+    /// space, spaces adjacent to a line break are dropped, and a run of breaks is capped at two
+    /// (one blank line) so a deeply wrapped `</div></div></p>` doesn't open a hole in the text.
+    /// Also trims both ends, which is why `blockText` doesn't call `trimmingCharacters`.
+    private static func normalizeBreaks(_ text: String) -> String {
+        var out = ""
+        var pendingBreaks = 0
+        var pendingSpace = false
+        for ch in text {
+            if ch == "\n" || ch == "\r" {
+                pendingBreaks += 1
+                pendingSpace = false
+                continue
+            }
+            if ch == " " || ch == "\t" {
+                if pendingBreaks == 0 { pendingSpace = true }
+                continue
+            }
+            // Nothing is flushed until there's a real character after it — that's what drops
+            // leading whitespace, and leaves trailing whitespace unflushed at the end.
+            if !out.isEmpty {
+                if pendingBreaks > 0 {
+                    out += String(repeating: "\n", count: min(pendingBreaks, 2))
+                } else if pendingSpace {
+                    out += " "
+                }
+            }
+            pendingBreaks = 0
+            pendingSpace = false
+            out.append(ch)
+        }
+        return out
     }
 
     private static func decodeEntities(_ text: String) -> String {
