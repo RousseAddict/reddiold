@@ -38,9 +38,10 @@ class FavoritesVC: PostListVC {
         guard !FavoritesStore.all().isEmpty else {
             if emptyLabel == nil {
                 let bounds = view.bounds
-                let label = UILabel(frame: CGRect(x: Layout.margin, y: Layout.margin,
+                let top = Layout.contentTop(in: self)
+                let label = UILabel(frame: CGRect(x: Layout.margin, y: top + Layout.margin,
                                                   width: bounds.width - (Layout.margin * 2),
-                                                  height: bounds.height - (Layout.margin * 2)))
+                                                  height: bounds.height - top - (Layout.margin * 2)))
                 label.numberOfLines = 0
                 label.textAlignment = .center
                 label.font = UIFont.systemFont(ofSize: 15)

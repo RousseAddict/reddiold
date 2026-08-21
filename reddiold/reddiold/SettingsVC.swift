@@ -58,7 +58,12 @@ class SettingsVC: UIViewController {
         let bounds = view.bounds
         let contentWidth = bounds.width - (Layout.margin * 2)
 
-        let scroll = UIScrollView(frame: bounds)
+        // Inset the scroll view itself rather than its content, so the running `y` below stays
+        // in content coordinates and the first section can't start underneath the nav bar
+        // (which it does since iOS 7 — see Layout.contentTop).
+        let top = Layout.contentTop(in: self)
+        let scroll = UIScrollView(frame: CGRect(x: 0, y: top, width: bounds.width,
+                                                height: bounds.height - top))
         scroll.backgroundColor = Theme.pageBackground
         view.addSubview(scroll)
         scrollView = scroll

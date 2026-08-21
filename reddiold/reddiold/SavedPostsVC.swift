@@ -25,10 +25,12 @@ class SavedPostsVC: UIViewController, UITableViewDataSource, UITableViewDelegate
         posts = SavedPostsStore.all()
 
         if tableView == nil {
-            // view.bounds already excludes the nav bar on real iOS 6 — don't use UIScreen.main.bounds.
+            // Not UIScreen.main.bounds; and the view's origin isn't the top of the content —
+            // see Layout.contentTop.
             let bounds = view.bounds
+            let top = Layout.contentTop(in: self)
 
-            let table = UITableView(frame: CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height))
+            let table = UITableView(frame: CGRect(x: 0, y: top, width: bounds.width, height: bounds.height - top))
             table.dataSource = self
             table.delegate = self
             table.tableFooterView = UIView(frame: .zero)
@@ -36,7 +38,7 @@ class SavedPostsVC: UIViewController, UITableViewDataSource, UITableViewDelegate
             view.addSubview(table)
             tableView = table
 
-            let label = UILabel(frame: CGRect(x: Layout.margin, y: 40,
+            let label = UILabel(frame: CGRect(x: Layout.margin, y: top + 40,
                                               width: bounds.width - (Layout.margin * 2), height: 60))
             label.textAlignment = .center
             label.numberOfLines = 0

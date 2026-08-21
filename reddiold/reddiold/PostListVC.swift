@@ -67,13 +67,14 @@ class PostListVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         super.viewDidAppear(animated)
         guard tableView == nil else { return }
 
-        // On real iOS 6 (classic UINavigationController layout), a pushed VC's own `view`
-        // is already resized/positioned to start right below the nav bar — view.bounds
-        // already excludes the bar, unlike UIScreen.main.bounds (the full physical screen).
+        // view.bounds, never UIScreen.main.bounds (the full physical screen). Where the view
+        // *starts* differs by OS, though — below the bar on iOS 6, underneath it since iOS 7 —
+        // so every y here is relative to Layout.contentTop rather than to the view's origin.
         let bounds = view.bounds
+        let top = Layout.contentTop(in: self)
 
         let freshnessHeight: CGFloat = 16
-        let freshness = UILabel(frame: CGRect(x: Layout.margin, y: 4,
+        let freshness = UILabel(frame: CGRect(x: Layout.margin, y: top + 4,
                                               width: bounds.width - (Layout.margin * 2), height: freshnessHeight))
         freshness.font = UIFont.systemFont(ofSize: 11)
         freshness.textColor = Theme.secondaryText
@@ -82,9 +83,8 @@ class PostListVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         view.addSubview(freshness)
         freshnessLabel = freshness
 
-        let availableHeight = bounds.height
-        let tableTop = 4 + freshnessHeight + 2
-        let table = UITableView(frame: CGRect(x: 0, y: tableTop, width: bounds.width, height: availableHeight - tableTop))
+        let tableTop = top + 4 + freshnessHeight + 2
+        let table = UITableView(frame: CGRect(x: 0, y: tableTop, width: bounds.width, height: bounds.height - tableTop))
         table.dataSource = self
         table.delegate = self
         table.tableFooterView = UIView(frame: .zero)

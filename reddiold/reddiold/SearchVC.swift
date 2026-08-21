@@ -37,13 +37,14 @@ class SearchVC: UIViewController, UISearchBarDelegate, UITableViewDataSource, UI
         super.viewDidAppear(animated)
         guard searchBar == nil else { return }
 
-        // view.bounds already excludes the nav bar on real iOS 6 — don't use UIScreen.main.bounds.
+        // Not UIScreen.main.bounds. The view's own origin isn't the top of the usable area
+        // either, which is why the cursor starts at Layout.contentTop — see there.
         let bounds = view.bounds
 
         // Running cursor rather than hardcoded y values — the elements above the table each
         // have their own height, and a fixed table top silently drifts whenever one changes.
         let contentWidth = bounds.width - (Layout.margin * 2)
-        var y: CGFloat = 0
+        var y = Layout.contentTop(in: self)
 
         let bar = UISearchBar(frame: CGRect(x: 0, y: y, width: bounds.width, height: Layout.buttonHeight))
         bar.placeholder = "Search Reddit"

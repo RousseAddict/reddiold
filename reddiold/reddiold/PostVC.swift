@@ -136,11 +136,12 @@ class PostVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
     }
 
     private func setupUI() {
-        // view.bounds already excludes the nav bar on real iOS 6 (classic nav-controller
-        // layout) — do not use UIScreen.main.bounds here, it's the full physical screen.
+        // Not UIScreen.main.bounds, that's the full physical screen. The view's own origin
+        // isn't the top of the content either — see Layout.contentTop.
         let bounds = view.bounds
+        let top = Layout.contentTop(in: self)
 
-        let table = UITableView(frame: CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height))
+        let table = UITableView(frame: CGRect(x: 0, y: top, width: bounds.width, height: bounds.height - top))
         table.dataSource = self
         table.delegate = self
         table.tableFooterView = UIView(frame: .zero)

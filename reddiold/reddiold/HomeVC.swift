@@ -31,7 +31,12 @@ class HomeVC: PostListVC {
         guard menuOverlay == nil else { return }
         let bounds = view.bounds
 
-        let overlay = UIView(frame: CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height))
+        // Inset below the nav bar so the panel's orange band isn't half-swallowed by it since
+        // iOS 7, and so the bar stays visible and tappable while the menu is open — the same
+        // arrangement iOS 6 gets for free (see Layout.contentTop). Everything inside the
+        // overlay is positioned relative to it, so this one frame does the whole job.
+        let top = Layout.contentTop(in: self)
+        let overlay = UIView(frame: CGRect(x: 0, y: top, width: bounds.width, height: bounds.height - top))
         overlay.backgroundColor = .clear
         overlay.isHidden = true
 
@@ -41,7 +46,7 @@ class HomeVC: PostListVC {
         dim.addTarget(self, action: #selector(closeMenu), for: .touchUpInside)
         overlay.addSubview(dim)
 
-        let panel = UIView(frame: CGRect(x: -menuWidth, y: 0, width: menuWidth, height: bounds.height))
+        let panel = UIView(frame: CGRect(x: -menuWidth, y: 0, width: menuWidth, height: overlay.bounds.height))
         panel.backgroundColor = Theme.menuBackground
         overlay.addSubview(panel)
 

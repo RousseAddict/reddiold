@@ -45,6 +45,33 @@ struct Layout {
     /// Clear Cache / Load more) — see Theme.actionButton. Also the iOS minimum comfortable
     /// tap target, so the running-`y` layouts advance by it rather than a literal 44.
     static let buttonHeight: CGFloat = 44
+
+    /// Y of the first usable point below the navigation bar, in `vc.view`'s own coordinate
+    /// space. The starting `y` for every hand-laid-out screen, and what a full-height table's
+    /// frame has to be offset by.
+    ///
+    /// This must be *measured*, because the two OS versions this single binary runs on
+    /// disagree about where a pushed view controller's view begins. On iOS 6,
+    /// UINavigationController sizes the view to start below the bar, so the answer is 0. Since
+    /// iOS 7, `edgesForExtendedLayout` defaults to `.all` and the view is full-screen *under*
+    /// a translucent bar, so the answer is ~64 — or 44 with the status bar hidden, or more
+    /// during an in-call banner. Converting the bar's own bounds yields every one of those
+    /// without enumerating them, which is why the same expression is correct on both.
+    ///
+    /// Note what this deliberately is not. `edgesForExtendedLayout` and
+    /// `automaticallyAdjustsScrollViewInsets` are the conventional iOS 7+ answer, and both are
+    /// iOS 7+ *properties* that crash with "unrecognized selector" on real iOS 6 — confirmed
+    /// via two isolated repros, since vtool patches the deployment gate but cannot add a
+    /// missing UIKit selector. It also isn't a version check or one of the `-D IOS*_TARGET`
+    /// build flags: geometry is what actually differs, so geometry is what to ask.
+    ///
+    /// Returns 0 when there is no navigation controller (a full-screen modal such as
+    /// ImagePreviewVC) and when the bar is hidden — in both cases the bar sits at or above the
+    /// view's own origin, so the conversion is <= 0 and `max` clamps it.
+    static func contentTop(in vc: UIViewController) -> CGFloat {
+        guard let bar = vc.navigationController?.navigationBar else { return 0 }
+        return max(0, bar.convert(bar.bounds, to: vc.view).maxY)
+    }
 }
 
 /// Every colour the app uses, and the builders for the controls whose styling was previously
